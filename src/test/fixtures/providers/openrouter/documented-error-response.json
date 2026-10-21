@@ -1,0 +1,21 @@
+{
+  "fixtureKind": "documented-example",
+  "fixtureVersion": 1,
+  "provider": "openrouter",
+  "operation": "image-generation-error",
+  "sourceUrl": "https://openrouter.ai/openai/gpt-image-2.5-flare#errors",
+  "retrievedAt": "2026-10-21",
+  "shapeOnly": true,
+  "httpStatus": 402,
+  "documentedStatusDescription": "insufficient credits",
+  "redactions": [
+    "The provider's exact error message is not published; the message field is a placeholder.",
+    "No authorization header or provider account data is retained."
+  ],
+  "response": {
+    "error": {
+      "code": 402,
+      "message": "<redacted provider error message>"
+    }
+  }
+}

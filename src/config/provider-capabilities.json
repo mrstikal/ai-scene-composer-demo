@@ -1,0 +1,464 @@
+{
+  "schemaVersion": 1,
+  "version": "provider-capabilities-2026-10-21",
+  "checkedAt": "2026-10-21",
+  "evidenceKind": "public-documentation",
+  "notes": [
+    "Read-only public documentation snapshot. It is not proof of live account access, model output, latency or charges.",
+    "No credentials were inspected, printed or used. No paid probe was made.",
+    "Re-check this file before any opt-in live test. If a required capability disappears, report PROVIDER_UNAVAILABLE instead of substituting a model or parameter."
+  ],
+  "contractFreeze": {
+    "nativeMaskParameter": false,
+    "exactSizeParameter": false,
+    "outputFormatParameter": false,
+    "promptRewriter": false,
+    "providerFallback": false,
+    "additionalImageModels": false,
+    "additionalImageProviders": false,
+    "streamingImageResponse": false,
+    "automaticRetries": false
+  },
+  "openrouter": {
+    "api": {
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "imagesEndpoint": "https://openrouter.ai/api/v1/images",
+      "modelsDiscoveryEndpoint": "https://openrouter.ai/api/v1/images/models"
+    },
+    "auth": {
+      "envVar": "OPENROUTER_API_KEY",
+      "scheme": "Bearer",
+      "serverSideOnly": true
+    },
+    "models": {
+      "flare": {
+        "requestedModelId": "openai/gpt-image-2.5-flare",
+        "observedDatedModelId": "openai/gpt-image-2.5-flare-20260908",
+        "endpointRecordUrl": "https://openrouter.ai/api/v1/images/models/openai/gpt-image-2.5-flare/endpoints",
+        "modelPageUrl": "https://openrouter.ai/openai/gpt-image-2.5-flare",
+        "provider": {
+          "providerName": "OpenAI",
+          "providerSlug": "openai",
+          "providerTag": "openai"
+        },
+        "supportedParameters": {
+          "aspect_ratio": {
+            "type": "enum",
+            "values": [
+              "1:1",
+              "3:2",
+              "2:3",
+              "4:3",
+              "3:4",
+              "16:9",
+              "9:16",
+              "21:9",
+              "auto"
+            ]
+          },
+          "quality": {
+            "type": "enum",
+            "values": [
+              "auto",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          "background": {
+            "type": "enum",
+            "values": [
+              "auto",
+              "transparent",
+              "opaque"
+            ]
+          },
+          "n": {
+            "type": "range",
+            "min": 1,
+            "max": 10
+          },
+          "input_references": {
+            "type": "range",
+            "min": 0,
+            "max": 16
+          },
+          "output_compression": {
+            "type": "range",
+            "min": 0,
+            "max": 100
+          }
+        },
+        "allowedPassthroughParameters": [
+          "moderation"
+        ],
+        "supportsStreaming": true,
+        "pricing": [
+          {
+            "billable": "input_image",
+            "unit": "token",
+            "cost_usd": 0.000008
+          },
+          {
+            "billable": "input_text",
+            "unit": "token",
+            "cost_usd": 0.000005
+          },
+          {
+            "billable": "output_image",
+            "unit": "token",
+            "cost_usd": 0.00003
+          }
+        ]
+      },
+      "sunburst": {
+        "requestedModelId": "openai/gpt-image-2.5-sunburst",
+        "observedDatedModelId": "openai/gpt-image-2.5-sunburst-20260908",
+        "endpointRecordUrl": "https://openrouter.ai/api/v1/images/models/openai/gpt-image-2.5-sunburst/endpoints",
+        "modelPageUrl": "https://openrouter.ai/openai/gpt-image-2.5-sunburst",
+        "provider": {
+          "providerName": "OpenAI",
+          "providerSlug": "openai",
+          "providerTag": "openai"
+        },
+        "supportedParameters": {
+          "aspect_ratio": {
+            "type": "enum",
+            "values": [
+              "1:1",
+              "3:2",
+              "2:3",
+              "4:3",
+              "3:4",
+              "16:9",
+              "9:16",
+              "21:9",
+              "auto"
+            ]
+          },
+          "quality": {
+            "type": "enum",
+            "values": [
+              "auto",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          "background": {
+            "type": "enum",
+            "values": [
+              "auto",
+              "transparent",
+              "opaque"
+            ]
+          },
+          "n": {
+            "type": "range",
+            "min": 1,
+            "max": 10
+          },
+          "input_references": {
+            "type": "range",
+            "min": 0,
+            "max": 16
+          },
+          "output_compression": {
+            "type": "range",
+            "min": 0,
+            "max": 100
+          }
+        },
+        "allowedPassthroughParameters": [
+          "moderation"
+        ],
+        "supportsStreaming": true,
+        "pricing": [
+          {
+            "billable": "input_image",
+            "unit": "token",
+            "cost_usd": 0.000008
+          },
+          {
+            "billable": "input_text",
+            "unit": "token",
+            "cost_usd": 0.000005
+          },
+          {
+            "billable": "output_image",
+            "unit": "token",
+            "cost_usd": 0.00003
+          }
+        ]
+      }
+    },
+    "fixedRequest": {
+      "modelSelection": {
+        "generation": "flare",
+        "edit": [
+          "flare",
+          "sunburst"
+        ],
+        "comparison": [
+          "flare",
+          "sunburst"
+        ]
+      },
+      "common": {
+        "aspect_ratio": "1:1",
+        "quality": "medium",
+        "background": "opaque",
+        "n": 1,
+        "provider": {
+          "only": [
+            "openai"
+          ],
+          "allow_fallbacks": false
+        }
+      },
+      "generation": {
+        "inputReferences": "omit",
+        "orderedInputImages": 0
+      },
+      "edit": {
+        "inputReferences": "source-first-then-user-references",
+        "sourceImageIndex": 1,
+        "userReferenceImageIndices": [
+          2,
+          3
+        ],
+        "omitAbsentReferences": true,
+        "userReferenceCount": {
+          "min": 0,
+          "max": 2
+        },
+        "totalInputImages": {
+          "min": 1,
+          "max": 3
+        },
+        "forbiddenAdditionalInputImages": [
+          "selection-mask",
+          "allowed-mask",
+          "blend-mask",
+          "highlighted-scene"
+        ]
+      }
+    },
+    "forbiddenRequestFields": [
+      "mask",
+      "size",
+      "resolution",
+      "output_format",
+      "seed",
+      "stream"
+    ],
+    "supportedButUnusedRequestFields": [
+      "output_compression"
+    ],
+    "responseContract": {
+      "buffered": true,
+      "streaming": false,
+      "timeoutMs": 300000,
+      "automaticRetries": false,
+      "exactlyOneImage": true,
+      "requiredImageField": "b64_json",
+      "optionalMediaTypeField": "media_type",
+      "allowedMediaTypes": [
+        "image/png",
+        "image/jpeg",
+        "image/webp"
+      ],
+      "singleFrame": true,
+      "maxDecodedImageBytes": 31457280,
+      "squareSidePixels": {
+        "min": 512,
+        "max": 4096
+      },
+      "usageParsing": "optional-and-independent-of-image-validity",
+      "errorBodySanitization": "required"
+    },
+    "billingRule": {
+      "completedGeneration": "billed-in-full",
+      "definitiveFailedGeneration": "not-billed",
+      "ambiguousOutcome": "unavailable-cost-and-retained-hold"
+    }
+  },
+  "metaSam": {
+    "api": {
+      "baseUrl": "https://api.meta.ai/v1",
+      "responsesEndpoint": "https://api.meta.ai/v1/responses"
+    },
+    "auth": {
+      "envVar": "META_MODEL_API_KEY",
+      "scheme": "Bearer",
+      "serverSideOnly": true
+    },
+    "model": "sam-3.1",
+    "transport": {
+      "sdk": "openai",
+      "baseUrl": "https://api.meta.ai/v1",
+      "timeoutMs": 120000,
+      "maxRetries": 0,
+      "stream": true,
+      "nonStreamingAllowedByProvider": true,
+      "nonStreamingUsed": false
+    },
+    "parser": {
+      "package": "@meta-sam/parser",
+      "requiredVersion": ">=0.1.0",
+      "verifiedVersion": "0.1.0",
+      "importFromPackageRootOnly": true,
+      "requiredExports": [
+        "buildObjectPrompt",
+        "parseImageStream",
+        "decodeMaskToRaster",
+        "recordsOfKind"
+      ],
+      "confidenceSupport": {
+        "requiresVersion": ">=0.0.13",
+        "used": false
+      }
+    },
+    "prompt": {
+      "builder": "buildObjectPrompt",
+      "size": {
+        "width": 1024,
+        "height": 1024
+      },
+      "objectId": "1",
+      "positivePoints": 1,
+      "negativePoints": {
+        "min": 0,
+        "max": 1
+      },
+      "metadata": {
+        "mask_encoding": "one_bit"
+      },
+      "forbidden": [
+        "concept-prompt-mixing",
+        "mask-prompt",
+        "hand-written-token-grammar"
+      ]
+    },
+    "outputContract": {
+      "requiresCompletedOutcome": true,
+      "errorDiagnosticsAllowed": 0,
+      "maskEncodingObserved": "one_bit",
+      "boxBounds": "half-open",
+      "maskDimensionsOrderOnWire": "height,width",
+      "maskRasterCroppedToBounds": true,
+      "pasteOrigin": "parsed-box-left-top",
+      "resizeCroppedMask": false,
+      "boundsMustMatchBox": true,
+      "validateMaskDimensions": true,
+      "validateRasterLength": true,
+      "streamConsumedOnce": true,
+      "preserveTerminalMetadata": true,
+      "rejections": [
+        "out-of-bounds-box",
+        "missing-or-duplicate-object-records",
+        "inconsistent-crop-dimensions",
+        "non-binary-pixels",
+        "empty-mask",
+        "incomplete-stream",
+        "error-diagnostics"
+      ],
+      "selectionValidation": {
+        "positivePixelValue": 1,
+        "negativePixelValue": 0,
+        "failureCode": "INVALID_SELECTION"
+      },
+      "fullFrameMask": {
+        "width": 1024,
+        "height": 1024,
+        "values": [
+          0,
+          255
+        ]
+      }
+    }
+  },
+  "accountAccess": {
+    "openrouter": {
+      "requiredFor": [
+        "generation",
+        "edit",
+        "comparison"
+      ],
+      "separateAccount": true,
+      "status": "not_verified",
+      "evidence": "public-documentation-only",
+      "paidProbePerformed": false
+    },
+    "meta": {
+      "requiredFor": [
+        "live-segmentation"
+      ],
+      "separateAccount": true,
+      "status": "not_verified",
+      "evidence": "public-documentation-only",
+      "paidProbePerformed": false
+    }
+  },
+  "gate": {
+    "status": "pass",
+    "summary": "All required public capabilities are present. Live account access remains unverified by design.",
+    "blockers": []
+  },
+  "sources": [
+    {
+      "url": "https://openrouter.ai/api/v1/images/models/openai/gpt-image-2.5-flare/endpoints",
+      "checkedAt": "2026-10-21",
+      "supports": "Flare endpoint capabilities, provider pin and token pricing"
+    },
+    {
+      "url": "https://openrouter.ai/api/v1/images/models/openai/gpt-image-2.5-sunburst/endpoints",
+      "checkedAt": "2026-10-21",
+      "supports": "Sunburst endpoint capabilities, provider pin and token pricing"
+    },
+    {
+      "url": "https://openrouter.ai/docs/guides/overview/multimodal/image-generation",
+      "checkedAt": "2026-10-21",
+      "supports": "Image API request/response shape, reference images, billing and error behavior"
+    },
+    {
+      "url": "https://openrouter.ai/openai/gpt-image-2.5-flare",
+      "checkedAt": "2026-10-21",
+      "supports": "Flare model page and dated endpoint alias"
+    },
+    {
+      "url": "https://openrouter.ai/openai/gpt-image-2.5-sunburst",
+      "checkedAt": "2026-10-21",
+      "supports": "Sunburst model page and dated endpoint alias"
+    },
+    {
+      "url": "https://dev.meta.ai/models/sam-3-1",
+      "checkedAt": "2026-10-21",
+      "supports": "SAM 3.1 model availability and per-image pricing"
+    },
+    {
+      "url": "https://dev.meta.ai/docs/sam/segmenting",
+      "checkedAt": "2026-10-21",
+      "supports": "SAM Responses endpoint, prompt grammar, mask encoding and limits"
+    },
+    {
+      "url": "https://dev.meta.ai/docs/sam/reading-segmentation",
+      "checkedAt": "2026-10-21",
+      "supports": "Cropped mask geometry, half-open boxes, raster dimensions and completion semantics"
+    },
+    {
+      "url": "https://dev.meta.ai/docs/sam/client-libraries",
+      "checkedAt": "2026-10-21",
+      "supports": "Parser package exports, minimum version and mask decoding"
+    },
+    {
+      "url": "https://dev.meta.ai/docs/pricing-rate-limits",
+      "checkedAt": "2026-10-21",
+      "supports": "SAM per-image billing unit and rate"
+    }
+  ]
+}

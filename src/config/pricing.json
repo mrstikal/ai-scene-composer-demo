@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "version": "pricing-2026-10-21",
+  "checkedAt": "2026-10-21",
+  "currency": "USD",
+  "capabilityVersion": "provider-capabilities-2026-10-21",
+  "evidenceKind": "public-documentation",
+  "notes": [
+    "Dated public reference rates, not guaranteed future quotes.",
+    "OpenRouter and Meta are separate billing accounts. SAM is not included in an OpenRouter balance.",
+    "Historical usage events must retain the pricing version that was active when they were recorded."
+  ],
+  "reservations": {
+    "projectBudget": {
+      "usd": 5,
+      "usdMicros": 5000000
+    },
+    "image": {
+      "usd": 0.25,
+      "usdMicros": 250000
+    },
+    "comparison": {
+      "usd": 0.5,
+      "usdMicros": 500000
+    },
+    "segmentation": {
+      "usd": 0.0025,
+      "usdMicros": 2500
+    }
+  },
+  "providers": {
+    "openrouter": {
+      "sourceUrls": [
+        "https://openrouter.ai/api/v1/images/models/openai/gpt-image-2.5-flare/endpoints",
+        "https://openrouter.ai/api/v1/images/models/openai/gpt-image-2.5-sunburst/endpoints"
+      ],
+      "models": {
+        "openai/gpt-image-2.5-flare": {
+          "displayName": "GPT Image 2.5 Flare",
+          "rates": [
+            {
+              "billable": "input_text",
+              "unit": "token",
+              "usdPerToken": 0.000005,
+              "usdPerMillionTokens": 5
+            },
+            {
+              "billable": "input_image",
+              "unit": "token",
+              "usdPerToken": 0.000008,
+              "usdPerMillionTokens": 8
+            },
+            {
+              "billable": "output_image",
+              "unit": "token",
+              "usdPerToken": 0.00003,
+              "usdPerMillionTokens": 30
+            }
+          ],
+          "billingRule": "Completed generations are billed in full; definitive failed generations are not billed."
+        },
+        "openai/gpt-image-2.5-sunburst": {
+          "displayName": "GPT Image 2.5 Sunburst",
+          "notes": [
+            "Same displayed token rates as Flare; the final image cost is not guaranteed to be identical."
+          ],
+          "rates": [
+            {
+              "billable": "input_text",
+              "unit": "token",
+              "usdPerToken": 0.000005,
+              "usdPerMillionTokens": 5
+            },
+            {
+              "billable": "input_image",
+              "unit": "token",
+              "usdPerToken": 0.000008,
+              "usdPerMillionTokens": 8
+            },
+            {
+              "billable": "output_image",
+              "unit": "token",
+              "usdPerToken": 0.00003,
+              "usdPerMillionTokens": 30
+            }
+          ],
+          "billingRule": "Completed generations are billed in full; definitive failed generations are not billed."
+        }
+      }
+    },
+    "meta": {
+      "sourceUrls": [
+        "https://dev.meta.ai/docs/pricing-rate-limits",
+        "https://dev.meta.ai/models/sam-3-1"
+      ],
+      "model": "sam-3.1",
+      "rates": [
+        {
+          "billable": "input_image",
+          "unit": "image",
+          "usdPerImage": 0.0025,
+          "usdPer1000Images": 2.5
+        }
+      ],
+      "billingRule": "Segmentation is billed per image, not per token. Streaming and non-streaming requests use the same price."
+    }
+  }
+}

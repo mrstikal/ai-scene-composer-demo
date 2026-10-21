@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "version": "provider-fixtures-2026-10-21",
+  "checkedAt": "2026-10-21",
+  "notes": [
+    "Every fixture in this directory is a redacted public-documentation example, not a live provider capture.",
+    "No credentials, authorization headers, image data URLs or personal data are stored here.",
+    "A documented example must never be presented as evidence that a live provider was called."
+  ],
+  "capturedLiveFixtures": [],
+  "fixtures": [
+    {
+      "id": "openrouter-documented-generation-response",
+      "fixtureKind": "documented-example",
+      "provider": "openrouter",
+      "operation": "image-generation",
+      "path": "openrouter/documented-generation-response.json"
+    },
+    {
+      "id": "openrouter-documented-error-response",
+      "fixtureKind": "documented-example",
+      "provider": "openrouter",
+      "operation": "image-generation-error",
+      "path": "openrouter/documented-error-response.json"
+    },
+    {
+      "id": "sam-documented-complete-output-line",
+      "fixtureKind": "documented-example",
+      "provider": "meta",
+      "operation": "segmentation",
+      "path": "sam/documented-complete-output-line.json"
+    }
+  ]
+}

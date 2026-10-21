@@ -1,0 +1,28 @@
+{
+  "fixtureKind": "documented-example",
+  "fixtureVersion": 1,
+  "provider": "openrouter",
+  "operation": "image-generation",
+  "sourceUrl": "https://openrouter.ai/docs/guides/overview/multimodal/image-generation#response-format",
+  "retrievedAt": "2026-10-21",
+  "shapeOnly": true,
+  "redactions": [
+    "data[0].b64_json is replaced with a non-decodable placeholder because the public documentation does not publish the example image bytes.",
+    "No authorization header, request body or provider account data is retained."
+  ],
+  "response": {
+    "created": 1748372400,
+    "data": [
+      {
+        "b64_json": "<redacted-base64-image-bytes>",
+        "media_type": "image/png"
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 0,
+      "completion_tokens": 4175,
+      "total_tokens": 4175,
+      "cost": 0.04
+    }
+  }
+}
