@@ -127,6 +127,10 @@ if (capabilities !== undefined && pricing !== undefined) {
   equal(pricing.schemaVersion, 1, 'pricing.schemaVersion');
   equal(capabilities.evidenceKind, 'public-documentation', 'provider-capabilities.evidenceKind');
   equal(pricing.evidenceKind, 'public-documentation', 'pricing.evidenceKind');
+  check(
+    /^\d{4}-\d{2}-\d{2}-v[1-9]\d*$/.test(pricing.version),
+    'pricing.version: expected YYYY-MM-DD-vN'
+  );
   equal(pricing.capabilityVersion, capabilities.version, 'pricing.capabilityVersion');
   equal(pricing.checkedAt, capabilities.checkedAt, 'pricing.checkedAt');
   equal(pricing.currency, 'USD', 'pricing.currency');

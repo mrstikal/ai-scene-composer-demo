@@ -1,9 +1,52 @@
 {
   "name": "ai-scene-composer-demo",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
+  "type": "module",
   "description": "AI Scene Composer PoC",
   "scripts": {
+    "dev": "next dev --hostname 127.0.0.1",
+    "build": "next build",
+    "start": "next start --hostname 127.0.0.1",
+    "worker": "tsx src/worker/index.ts",
+    "fixtures:prepare": "tsx scripts/prepare-fixtures.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:live": "tsx scripts/smoke-live.ts",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "data:reset": "tsx scripts/reset-local-data.ts",
     "check:contracts": "node scripts/check-provider-contracts.mjs"
+  },
+  "dependencies": {
+    "@meta-sam/parser": "0.1.0",
+    "@next/env": "16.4.2",
+    "better-sqlite3": "13.0.3",
+    "drizzle-orm": "0.45.4",
+    "next": "16.4.2",
+    "openai": "7.41.0",
+    "proper-lockfile": "4.1.2",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "sharp": "0.35.5",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "24.19.2",
+    "@types/proper-lockfile": "4.1.4",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "drizzle-kit": "0.31.11",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.4.2",
+    "tailwindcss": "4.3.3",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "5.0.5"
   }
 }

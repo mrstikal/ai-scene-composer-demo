@@ -1,0 +1,175 @@
+import { readFile } from "node:fs/promises";
+
+import sharp from "sharp";
+
+import { AppError } from "../errors";
+import {
+  CANONICAL_SIZE,
+  decodeRgb,
+  encodeRgbPng,
+  inspectImage,
+  inspectProviderImage,
+} from "../images/normalize";
+import type {
+  ImageAdapterInput,
+  ImageAdapterResult,
+  ImageModel,
+  SegmentationAdapterInput,
+  SegmentationAdapterResult,
+} from "./types";
+
+export async function mockGenerate(input: {
+  fixturePath: string;
+  prompt: string;
+}): Promise<ImageAdapterResult> {
+  const bytes = await readFile(input.fixturePath);
+  const inspected = await inspectProviderImage(bytes);
+  if (inspected.width !== CANONICAL_SIZE || inspected.height !== CANONICAL_SIZE) {
+    throw new AppError(500, "CONFIG_INVALID", "Synthetic generation fixture must be 1024 x 1024.");
+  }
+
+  return {
+    bytes,
+    mimeType: inspected.mimeType,
+    width: inspected.width,
+    height: inspected.height,
+    providerRequestId: null,
+    observedCostUsdMicros: 0,
+    usage: null,
+    latencyMs: null,
+  };
+}
+
+export async function mockEdit(input: ImageAdapterInput): Promise<ImageAdapterResult> {
+  if (input.orderedInputImages.length < 1 || input.orderedInputImages.length > 3) {
+    throw new AppError(400, "INVALID_REQUEST", "Mock edit expects one to three ordered input images.");
+  }
+
+  const source = input.orderedInputImages[0];
+  if (source === undefined) {
+    throw new AppError(400, "INVALID_REQUEST", "Mock edit requires a source image.");
+  }
+
+  await inspectImage(source);
+  const decoded = await decodeRgb(source);
+  const output = Buffer.from(decoded.data);
+  const channelIndex = input.model === "openai/gpt-image-2.5-flare" ? 0 : 2;
+
+  for (let index = 0; index < output.length; index += 3) {
+    output[index + channelIndex] = (output[index + channelIndex] + 40) % 256;
+  }
+
+  const bytes = await encodeRgbPng(output, decoded.width, decoded.height);
+  const inspected = await inspectProviderImage(bytes);
+
+  return {
+    bytes,
+    mimeType: "image/png",
+    width: inspected.width,
+    height: inspected.height,
+    providerRequestId: null,
+    observedCostUsdMicros: 0,
+    usage: null,
+    latencyMs: null,
+  };
+}
+
+export function buildMockMask(input: {
+  positive: { x: number; y: number };
+  negative: { x: number; y: number } | null;
+  size?: number;
+}): Uint8Array {
+  const size = input.size ?? CANONICAL_SIZE;
+  const { positive, negative } = input;
+
+  if (
+    !Number.isInteger(positive.x) ||
+    !Number.isInteger(positive.y) ||
+    positive.x < 0 ||
+    positive.y < 0 ||
+    positive.x >= size ||
+    positive.y >= size
+  ) {
+    throw new AppError(400, "INVALID_POINT", "Positive point is outside the canonical image.");
+  }
+  if (negative !== null) {
+    if (
+      !Number.isInteger(negative.x) ||
+      !Number.isInteger(negative.y) ||
+      negative.x < 0 ||
+      negative.y < 0 ||
+      negative.x >= size ||
+      negative.y >= size
+    ) {
+      throw new AppError(400, "INVALID_POINT", "Negative point is outside the canonical image.");
+    }
+    if (negative.x === positive.x && negative.y === positive.y) {
+      throw new AppError(400, "INVALID_POINT", "Positive and negative points must differ.");
+    }
+  }
+
+  const left = Math.max(0, positive.x - 64);
+  const right = Math.min(size, positive.x + 65);
+  const top = Math.max(0, positive.y - 64);
+  const bottom = Math.min(size, positive.y + 65);
+  const mask = new Uint8Array(size * size);
+
+  for (let y = top; y < bottom; y += 1) {
+    const row = y * size;
+    mask.fill(1, row + left, row + right);
+  }
+
+  if (
+    negative !== null &&
+    negative.x >= left &&
+    negative.x < right &&
+    negative.y >= top &&
+    negative.y < bottom
+  ) {
+    mask[negative.y * size + negative.x] = 0;
+  }
+
+  return mask;
+}
+
+export async function mockSegment(input: SegmentationAdapterInput): Promise<SegmentationAdapterResult> {
+  const size = input.size ?? CANONICAL_SIZE;
+  await inspectImage(input.image);
+  const fullMask = buildMockMask({
+    positive: input.positive,
+    negative: input.negative,
+    size,
+  });
+
+  return {
+    fullMask,
+    width: size,
+    height: size,
+    providerRequestId: null,
+    observedCostUsdMicros: 0,
+    usage: null,
+    latencyMs: null,
+  };
+}
+
+export async function maskToGrayscalePng(mask: Uint8Array, width: number, height: number): Promise<Buffer> {
+  if (mask.length !== width * height) {
+    throw new AppError(500, "CONFIG_INVALID", "Mask dimensions do not match its raster length.");
+  }
+
+  const pixels = Buffer.alloc(mask.length);
+  for (let index = 0; index < mask.length; index += 1) {
+    pixels[index] = mask[index] === 1 ? 255 : 0;
+  }
+
+  return sharp(pixels, { raw: { width, height, channels: 1 } })
+    .toColourspace("b-w")
+    .png({ compressionLevel: 9, adaptiveFiltering: false })
+    .toBuffer();
+}
+
+export function imageModelForChannel(channel: "red" | "blue"): ImageModel {
+  return channel === "red"
+    ? "openai/gpt-image-2.5-flare"
+    : "openai/gpt-image-2.5-sunburst";
+}
