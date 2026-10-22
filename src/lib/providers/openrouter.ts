@@ -11,7 +11,7 @@ import {
 
 export const OPENROUTER_IMAGES_ENDPOINT = "https://openrouter.ai/api/v1/images";
 export const OPENROUTER_TIMEOUT_MS = 300_000;
-export const MAX_PROVIDER_RESPONSE_BYTES = 32 * 1024 * 1024;
+export const MAX_PROVIDER_RESPONSE_BYTES = 64 * 1024 * 1024;
 
 export interface GenerationPayload {
   model: typeof GENERATION_MODEL;

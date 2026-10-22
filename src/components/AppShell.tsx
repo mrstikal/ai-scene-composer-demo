@@ -98,14 +98,19 @@ export function AppShell() {
   const [pendingSelection, setPendingSelection] = useState<
     (PendingSelectionRequest & { runId: string }) | null
   >(null);
+  const [selectedEditRunId, setSelectedEditRunId] = useState<string | null>(null);
+  const [selectedComparisonGroupId, setSelectedComparisonGroupId] = useState<string | null>(null);
   const [selectionSubmitting, setSelectionSubmitting] = useState<{
     projectId: string;
     sourceVersionId: string;
   } | null>(null);
+  const [selectionAttemptFailed, setSelectionAttemptFailed] = useState(false);
   const [pollNow, setPollNow] = useState(0);
   const submitKeys = useRef(createSubmitKeyStore());
   const currentProjectIdRef = useRef<string | null>(null);
+  const snapshotRequestSeqRef = useRef(0);
   const selectionInFlightRef = useRef<string | null>(null);
+  const selectionRequestSeqRef = useRef(0);
 
   function submitKey(operation: string, signature: string): string {
     return submitKeys.current.keyFor(operation, signature);
@@ -115,8 +120,16 @@ export function AppShell() {
     submitKeys.current.clear(operation);
   }
 
+  function clearSubmitKeyOnRejection(operation: string, cause: unknown): void {
+    if (cause instanceof ApiRequestError && cause.status < 500) {
+      clearSubmitKey(operation);
+    }
+  }
+
   const loadProject = useCallback(async (id: string) => {
+    const requestSeq = ++snapshotRequestSeqRef.current;
     const next = await apiRequest<ProjectSnapshotDto>(`/api/projects/${id}`);
+    if (requestSeq !== snapshotRequestSeqRef.current) return;
     currentProjectIdRef.current = id;
     setProjectId(id);
     setSnapshot(next);
@@ -156,8 +169,9 @@ export function AppShell() {
           return;
         }
 
+        const requestSeq = ++snapshotRequestSeqRef.current;
         const next = await apiRequest<ProjectSnapshotDto>(`/api/projects/${selected}`);
-        if (cancelled) return;
+        if (cancelled || requestSeq !== snapshotRequestSeqRef.current) return;
         currentProjectIdRef.current = selected;
         setProjectId(selected);
         setSnapshot(next);
@@ -226,7 +240,14 @@ export function AppShell() {
             run.parentVersionId === activeVersionId &&
             run.comparisonGroupId === null,
         ) ?? [];
-  const latestEditRun = editRunsForActive.at(-1) ?? null;
+  const selectedEditRun =
+    snapshot?.runs.find(
+      (run) =>
+        run.id === selectedEditRunId &&
+        run.kind === "edit" &&
+        run.comparisonGroupId === null,
+    ) ?? null;
+  const latestEditRun = selectedEditRun ?? editRunsForActive.at(-1) ?? null;
   const editProviderAvailable = health?.providers.images.available ?? false;
   const editProviderReason = health?.providers.images.reason ?? null;
   const editReservationUsdMicros = mockMode ? 0 : imageReservationUsdMicros;
@@ -249,10 +270,17 @@ export function AppShell() {
   const activeComparisonGroups = comparisonGroupEntries.filter((group) =>
     group.runs.some((run) => run.parentVersionId === activeVersionId),
   );
+  const selectedComparisonGroup =
+    comparisonGroupEntries.find((group) => group.id === selectedComparisonGroupId) ?? null;
   const latestComparisonGroup =
+    selectedComparisonGroup ??
     (activeComparisonGroups.length > 0 ? activeComparisonGroups : comparisonGroupEntries)
       .sort((left, right) => left.createdAt - right.createdAt)
-      .at(-1) ?? null;
+      .at(-1) ??
+    null;
+  const editHistory = (snapshot?.runs ?? [])
+    .filter((run) => run.kind === "edit" && run.comparisonGroupId === null)
+    .sort((left, right) => left.createdAt - right.createdAt);
 
   const costSignature =
     snapshot === null
@@ -306,7 +334,9 @@ export function AppShell() {
           (selection) => selection.id === effectiveSelectedSelectionId,
         ) ?? null;
   const activeSelection =
-    pendingGuardFailedForActiveVersion ? null : selectedSelection ?? latestSelection;
+    pendingGuardFailedForActiveVersion || selectionAttemptFailed
+      ? null
+      : selectedSelection ?? latestSelection;
 
   const submittingThisView =
     selectionSubmitting !== null &&
@@ -355,6 +385,7 @@ export function AppShell() {
     const controller = new AbortController();
 
     async function poll(): Promise<void> {
+      const requestEpoch = snapshotRequestSeqRef.current;
       try {
         const [nextSnapshot, nextHealth] = await Promise.all([
           apiRequest<ProjectSnapshotDto>(`/api/projects/${projectId}`, {
@@ -363,7 +394,12 @@ export function AppShell() {
           fetchHealth(controller.signal),
         ]);
         if (cancelled) return;
-        setSnapshot(nextSnapshot);
+        if (
+          requestEpoch === snapshotRequestSeqRef.current &&
+          currentProjectIdRef.current === projectId
+        ) {
+          setSnapshot(nextSnapshot);
+        }
         setHealth(nextHealth);
         setPollNow(0);
         setConnectionWarning(null);
@@ -413,6 +449,7 @@ export function AppShell() {
   }, [projectId, costSignature]);
 
   async function handleCreateProject(): Promise<void> {
+    selectionRequestSeqRef.current += 1;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -427,6 +464,7 @@ export function AppShell() {
       });
       setTitle("");
       setSelectionUiVersionId(null);
+      setSelectionAttemptFailed(false);
       setSelectionMode("positive");
       setPositivePoint(null);
       setNegativePoint(null);
@@ -442,12 +480,16 @@ export function AppShell() {
   }
 
   async function handleSelectProject(nextId: string): Promise<void> {
+    snapshotRequestSeqRef.current += 1;
+    selectionRequestSeqRef.current += 1;
+    currentProjectIdRef.current = null;
     setBusy(true);
     setError(null);
     setNotice(null);
     setCosts(null);
     setCostsError(null);
     setSelectionUiVersionId(null);
+    setSelectionAttemptFailed(false);
     setSelectionMode("positive");
     setPositivePoint(null);
     setNegativePoint(null);
@@ -481,7 +523,7 @@ export function AppShell() {
       await loadProject(projectId);
       setNotice("Bundled sample imported as the root scene.");
     } catch (cause) {
-      if (cause instanceof ApiRequestError) clearSubmitKey(operation);
+      clearSubmitKeyOnRejection(operation, cause);
       setError(cause instanceof Error ? cause.message : "Sample import failed.");
     } finally {
       setBusy(false);
@@ -517,7 +559,7 @@ export function AppShell() {
           : "Base image uploaded as the root scene.",
       );
     } catch (cause) {
-      if (cause instanceof ApiRequestError) clearSubmitKey(operation);
+      clearSubmitKeyOnRejection(operation, cause);
       setError(cause instanceof Error ? cause.message : "Upload failed.");
     } finally {
       setBusy(false);
@@ -554,7 +596,7 @@ export function AppShell() {
       setNotice("Reference image uploaded.");
       return result.assetId;
     } catch (cause) {
-      if (cause instanceof ApiRequestError) clearSubmitKey(operation);
+      clearSubmitKeyOnRejection(operation, cause);
       setError(cause instanceof Error ? cause.message : "Reference upload failed.");
       return null;
     } finally {
@@ -584,8 +626,6 @@ export function AppShell() {
         instruction: input.instruction,
         referenceIds: input.referenceIds,
         model: input.model,
-        pricingVersion: snapshot.pricing.version,
-        reservation: editReservationUsdMicros,
       }),
     );
 
@@ -613,6 +653,8 @@ export function AppShell() {
         }),
       });
       clearSubmitKey(operation);
+      setSelectedEditRunId(null);
+      setSelectedComparisonGroupId(null);
       try {
         await loadProject(projectId);
       } catch {
@@ -622,7 +664,7 @@ export function AppShell() {
       setNotice("Edit queued. The worker will create a child version.");
       return true;
     } catch (cause) {
-      if (cause instanceof ApiRequestError) clearSubmitKey(operation);
+      clearSubmitKeyOnRejection(operation, cause);
       setError(cause instanceof Error ? cause.message : "Edit enqueue failed.");
       return false;
     } finally {
@@ -651,8 +693,6 @@ export function AppShell() {
         targetLabel: input.targetLabel,
         instruction: input.instruction,
         referenceIds: input.referenceIds,
-        pricingVersion: snapshot.pricing.version,
-        reservation: comparisonReservationUsdMicros,
       }),
     );
 
@@ -679,6 +719,8 @@ export function AppShell() {
         }),
       });
       clearSubmitKey(operation);
+      setSelectedEditRunId(null);
+      setSelectedComparisonGroupId(null);
       try {
         await loadProject(projectId);
       } catch {
@@ -688,7 +730,7 @@ export function AppShell() {
       setNotice("Comparison queued: Flare and Sunburst share the frozen input.");
       return true;
     } catch (cause) {
-      if (cause instanceof ApiRequestError) clearSubmitKey(operation);
+      clearSubmitKeyOnRejection(operation, cause);
       setError(cause instanceof Error ? cause.message : "Comparison enqueue failed.");
       return false;
     } finally {
@@ -723,10 +765,14 @@ export function AppShell() {
 
   async function handleSelectVersion(versionId: string): Promise<void> {
     if (projectId === null) return;
+    selectionRequestSeqRef.current += 1;
     setBusy(true);
     setError(null);
+    setSelectedEditRunId(null);
+    setSelectedComparisonGroupId(null);
     if (versionId !== activeVersionId) {
       setSelectionUiVersionId(versionId);
+      setSelectionAttemptFailed(false);
       setSelectionMode("positive");
       setPositivePoint(null);
       setNegativePoint(null);
@@ -754,10 +800,7 @@ export function AppShell() {
     setError(null);
     setNotice(null);
     const operation = "generate";
-    const key = submitKey(
-      operation,
-      `${projectId}:${JSON.stringify(generationInput)}:${snapshot.pricing.version}:${imageReservationUsdMicros}`,
-    );
+    const key = submitKey(operation, `${projectId}:${JSON.stringify(generationInput)}`);
     try {
       await apiRequest<GenerationResponse>("/api/generations", {
         method: "POST",
@@ -776,10 +819,15 @@ export function AppShell() {
         }),
       });
       clearSubmitKey(operation);
-      await loadProject(projectId);
+      try {
+        await loadProject(projectId);
+      } catch {
+        setConnectionWarning("Generation queued. Refresh the project to see progress.");
+        setPollNow((value) => value + 1);
+      }
       setNotice("Generation queued. The worker will install the root when it completes.");
     } catch (cause) {
-      if (cause instanceof ApiRequestError) clearSubmitKey(operation);
+      clearSubmitKeyOnRejection(operation, cause);
       setError(cause instanceof Error ? cause.message : "Generation enqueue failed.");
     } finally {
       setBusy(false);
@@ -796,18 +844,20 @@ export function AppShell() {
     const scopeKey = `${projectId}:${activeVersionId}`;
     if (selectionInFlightRef.current === scopeKey) return;
     selectionInFlightRef.current = scopeKey;
+    const attemptId = ++selectionRequestSeqRef.current;
 
     const startedProjectId = projectId;
     const startedVersionId = activeVersionId;
     const pricingVersion = snapshot.pricing.version;
     setSelectionSubmitting({ projectId: startedProjectId, sourceVersionId: startedVersionId });
+    setSelectionAttemptFailed(false);
     setError(null);
     setNotice(null);
 
     const operation = "segment";
     const key = submitKey(
       operation,
-      `${startedProjectId}:${startedVersionId}:${JSON.stringify({ positive, negative })}:${pricingVersion}:${segmentationReservationUsdMicros}`,
+      `${startedProjectId}:${startedVersionId}:${JSON.stringify({ positive, negative })}`,
     );
 
     try {
@@ -830,6 +880,8 @@ export function AppShell() {
         }),
       });
       clearSubmitKey(operation);
+      if (attemptId !== selectionRequestSeqRef.current) return;
+      setSelectionAttemptFailed(false);
       setPendingSelection({
         sourceVersionId: startedVersionId,
         positivePoints: [positive],
@@ -838,16 +890,28 @@ export function AppShell() {
       });
 
       try {
+        const requestEpoch = snapshotRequestSeqRef.current;
         const next = await apiRequest<ProjectSnapshotDto>(`/api/projects/${startedProjectId}`);
-        if (currentProjectIdRef.current === startedProjectId) setSnapshot(next);
+        if (
+          attemptId === selectionRequestSeqRef.current &&
+          currentProjectIdRef.current === startedProjectId &&
+          requestEpoch === snapshotRequestSeqRef.current
+        ) {
+          setSnapshot(next);
+        }
       } catch {
-        setConnectionWarning("Selection queued. Refresh the project to see progress.");
-        setPollNow((value) => value + 1);
+        if (attemptId === selectionRequestSeqRef.current) {
+          setConnectionWarning("Selection queued. Refresh the project to see progress.");
+          setPollNow((value) => value + 1);
+        }
       }
+      if (attemptId !== selectionRequestSeqRef.current) return;
       setNotice("Selection queued. The worker will save the mask.");
     } catch (cause) {
-      if (cause instanceof ApiRequestError) clearSubmitKey(operation);
+      clearSubmitKeyOnRejection(operation, cause);
+      if (attemptId !== selectionRequestSeqRef.current) return;
       setError(cause instanceof Error ? cause.message : "Selection enqueue failed.");
+      setSelectionAttemptFailed(true);
       setPendingSelection(null);
       setSelectionSubmitting(null);
     } finally {
@@ -862,6 +926,7 @@ export function AppShell() {
     setSelectionUiVersionId(activeVersionId);
     setPendingSelection(null);
     setSelectionSubmitting(null);
+    setSelectionAttemptFailed(false);
 
     if (effectiveSelectionMode === "negative") {
       const base = displayPositivePoint;
@@ -885,30 +950,88 @@ export function AppShell() {
 
   function handleModeChange(mode: "positive" | "negative"): void {
     setSelectionUiVersionId(activeVersionId);
+    setSelectionAttemptFailed(false);
     setSelectionMode(mode);
   }
 
   function handleSelectSavedSelection(selectionId: string | null): void {
+    selectionRequestSeqRef.current += 1;
     setSelectionUiVersionId(activeVersionId);
     setPendingSelection(null);
     setSelectionSubmitting(null);
+    setSelectionAttemptFailed(false);
     setSelectedSelectionId(selectionId);
     setPositivePoint(null);
     setNegativePoint(null);
     setSelectionMode("positive");
   }
 
+  async function handleOpenEditRun(run: RunSummaryDto): Promise<void> {
+    if (projectId === null) return;
+    selectionRequestSeqRef.current += 1;
+    setBusy(true);
+    setError(null);
+    try {
+      if (run.parentVersionId !== null && run.parentVersionId !== activeVersionId) {
+        await apiRequest(`/api/projects/${projectId}/active-version`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ versionId: run.parentVersionId }),
+        });
+      }
+      setSelectedEditRunId(run.id);
+      setSelectedComparisonGroupId(null);
+      await loadProject(projectId);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Run history could not be opened.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleOpenComparison(group: {
+    id: string;
+    runs: RunSummaryDto[];
+  }): Promise<void> {
+    if (projectId === null) return;
+    selectionRequestSeqRef.current += 1;
+    setBusy(true);
+    setError(null);
+    try {
+      const parentVersionId = group.runs.find((run) => run.parentVersionId !== null)?.parentVersionId ?? null;
+      if (parentVersionId !== null && parentVersionId !== activeVersionId) {
+        await apiRequest(`/api/projects/${projectId}/active-version`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ versionId: parentVersionId }),
+        });
+      }
+      setSelectedComparisonGroupId(group.id);
+      setSelectedEditRunId(null);
+      await loadProject(projectId);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Comparison history could not be opened.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleRetry(run: RunSummaryDto): Promise<void> {
     if (projectId === null || snapshot === null) return;
+    if (
+      run.possibleDuplicateCharge &&
+      !window.confirm(
+        "The previous provider attempt has an unknown outcome and may already have been billed. Retry anyway?",
+      )
+    ) {
+      return;
+    }
     const retryReservation = run.retryMode === "local" ? 0 : run.retryReservationUsdMicros;
     setBusy(true);
     setError(null);
     setNotice(null);
     const operation = `retry:${run.id}`;
-    const key = submitKey(
-      operation,
-      `${run.retryMode}:${snapshot.pricing.version}:${retryReservation}`,
-    );
+    const key = submitKey(operation, `${run.id}:${run.retryMode}`);
     try {
       const result = await apiRequest<RetryResponse>(`/api/runs/${run.id}/retry`, {
         method: "POST",
@@ -922,7 +1045,7 @@ export function AppShell() {
             reservationUsdMicros: retryReservation,
             acknowledged: true,
           },
-          acknowledgePossibleDuplicateCharge: true,
+          acknowledgePossibleDuplicateCharge: run.possibleDuplicateCharge,
         }),
       });
       clearSubmitKey(operation);
@@ -948,7 +1071,7 @@ export function AppShell() {
       }
       setNotice("Retry queued.");
     } catch (cause) {
-      if (cause instanceof ApiRequestError) clearSubmitKey(operation);
+      clearSubmitKeyOnRejection(operation, cause);
       setError(cause instanceof Error ? cause.message : "Retry failed.");
     } finally {
       setBusy(false);
@@ -1267,6 +1390,128 @@ export function AppShell() {
               </ul>
             )}
           </section>
+
+          <section className="rounded-xl border border-stone-300 bg-white p-4">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500">
+              Run history
+            </h2>
+            <p className="mt-2 text-xs font-medium text-stone-600">Edits</p>
+            {editHistory.length === 0 ? (
+              <p className="mt-1 text-xs text-stone-500">No single-model edits yet.</p>
+            ) : (
+              <ul className="mt-1 space-y-1">
+                {editHistory.map((run) => (
+                  <li key={run.id}>
+                    <button
+                      type="button"
+                      className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${
+                        run.id === selectedEditRunId
+                          ? "bg-stone-900 text-white"
+                          : "bg-stone-50 text-stone-700 hover:bg-stone-100"
+                      }`}
+                      onClick={() => void handleOpenEditRun(run)}
+                      disabled={busy}
+                    >
+                      <span className="block font-medium">
+                        Edit {shortId(run.id)} · {run.status}
+                      </span>
+                      <span
+                        className={`block ${
+                          run.id === selectedEditRunId ? "text-stone-300" : "text-stone-500"
+                        }`}
+                      >
+                        {run.model} · {run.executionMode} · parent{" "}
+                        {run.parentVersionId === null ? "none" : shortId(run.parentVersionId)}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="mt-3 text-xs font-medium text-stone-600">Comparisons</p>
+            {comparisonGroupEntries.length === 0 ? (
+              <p className="mt-1 text-xs text-stone-500">No comparison groups yet.</p>
+            ) : (
+              <ul className="mt-1 space-y-1">
+                {comparisonGroupEntries.map((group) => (
+                  <li key={group.id}>
+                    <button
+                      type="button"
+                      className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${
+                        group.id === selectedComparisonGroupId
+                          ? "bg-stone-900 text-white"
+                          : "bg-stone-50 text-stone-700 hover:bg-stone-100"
+                      }`}
+                      onClick={() => void handleOpenComparison(group)}
+                      disabled={busy}
+                    >
+                      <span className="block font-medium">
+                        Comparison {shortId(group.id)}
+                      </span>
+                      <span
+                        className={`block ${
+                          group.id === selectedComparisonGroupId
+                            ? "text-stone-300"
+                            : "text-stone-500"
+                        }`}
+                      >
+                        {group.runs.length} attempts ·{" "}
+                        {group.runs.some(
+                          (run) => run.status === "queued" || run.status === "running",
+                        )
+                          ? "active"
+                          : "finished"}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {snapshot?.versions.some(
+              (version) => version.origin === "edit" && version.originatingRunId !== null,
+            ) ? (
+              <>
+                <p className="mt-3 text-xs font-medium text-stone-600">Versions to runs</p>
+                <ul className="mt-1 space-y-1">
+                  {snapshot.versions
+                    .filter(
+                      (version) =>
+                        version.origin === "edit" && version.originatingRunId !== null,
+                    )
+                    .map((version) => {
+                      const run =
+                        snapshot.runs.find(
+                          (candidate) => candidate.id === version.originatingRunId,
+                        ) ?? null;
+                      const group =
+                        run?.comparisonGroupId === null || run?.comparisonGroupId === undefined
+                          ? null
+                          : comparisonGroupEntries.find(
+                              (entry) => entry.id === run.comparisonGroupId,
+                            ) ?? null;
+                      if (run === null) return null;
+                      return (
+                        <li key={version.id}>
+                          <button
+                            type="button"
+                            className="w-full rounded-md bg-stone-50 px-2 py-1.5 text-left text-xs text-stone-700 hover:bg-stone-100"
+                            onClick={() =>
+                              group !== null
+                                ? void handleOpenComparison(group)
+                                : void handleOpenEditRun(run)
+                            }
+                            disabled={busy}
+                          >
+                            Open {version.origin} {shortId(version.id)} origin run{" "}
+                            {shortId(run.id)}
+                          </button>
+                        </li>
+                      );
+                    })}
+                </ul>
+              </>
+            ) : null}
+          </section>
         </aside>
 
         <section className="min-h-[420px] min-w-0 rounded-xl border border-stone-300 bg-white p-4">
@@ -1356,7 +1601,7 @@ export function AppShell() {
           />
 
           <EditPanel
-            key={`${projectId ?? "none"}:${activeVersionId ?? "none"}`}
+            key={`${projectId ?? "none"}:${activeVersionId ?? "none"}:${latestEditRun?.id ?? "none"}`}
             projectId={projectId}
             activeVersionId={activeVersionId}
             selection={activeSelection}

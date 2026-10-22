@@ -32,6 +32,7 @@ function run(overrides: Partial<RunSummaryDto> = {}): RunSummaryDto {
     evaluation: null,
     retryMode: "none",
     retryReservationUsdMicros: 0,
+    possibleDuplicateCharge: false,
     providerLatencyMs: null,
     errorCode: null,
     errorMessage: null,

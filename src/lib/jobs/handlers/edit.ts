@@ -24,7 +24,8 @@ import { getProjectCommitmentMicros } from "../../budget/service";
 import { markRunFailed } from "../queue";
 import { parseProviderReceipt } from "../receipt";
 import type { RunHandler, RunHandlerContext } from "../worker";
-import { createPendingUsageEvent, markUsageUnknown, settleUsageEvent } from "../../usage/service";
+import { createPendingUsageEvent, markUsageUnknown } from "../../usage/service";
+import { markRunNeedsReview, settleRunAttempt } from "../settlement";
 import { createEditAdapter } from "../../providers/factory";
 import type { ImageEditAdapter, ImageGenerationResult } from "../../providers/types";
 
@@ -72,19 +73,6 @@ function editMetadata(snapshot: EditSnapshot): EditSourceMetadata {
   });
 }
 
-function markNeedsReview(db: AppDatabase, run: RunRow, message: string): void {
-  db.update(runs)
-    .set({
-      status: "needs_review",
-      stage: "error",
-      finishedAt: Date.now(),
-      errorCode: "INTERRUPTED",
-      errorMessage: message,
-    })
-    .where(eq(runs.id, run.id))
-    .run();
-}
-
 function markEditFailed(
   context: RunHandlerContext,
   run: RunRow,
@@ -119,44 +107,28 @@ function settleResult(
 
   if (result.kind === "rejected") {
     const amount = observed ?? 0;
-    settleUsageEvent(context.db, {
-      runId: run.id,
+    settleRunAttempt(context, run.id, {
       outcome: "rejected",
       amountUsdMicros: amount,
       costProvenance: mock ? "calculated" : observed === null ? "calculated" : "provider",
+      chargeUsdMicros: amount,
       usageJson: result.usage,
       providerRequestId: result.providerRequestId,
       elapsedMs: result.latencyMs,
     });
-    context.db
-      .update(runs)
-      .set({
-        budgetChargeUsdMicros: amount,
-        providerFinishedAt: Date.now(),
-      })
-      .where(eq(runs.id, run.id))
-      .run();
     return amount;
   }
 
   const amount = mock ? 0 : observed ?? snapshot.reservationUsdMicros;
-  settleUsageEvent(context.db, {
-    runId: run.id,
+  settleRunAttempt(context, run.id, {
     outcome: "completed",
     amountUsdMicros: amount,
     costProvenance: mock ? "calculated" : observed !== null ? "provider" : "estimated",
+    chargeUsdMicros: amount,
     usageJson: result.usage,
     providerRequestId: result.providerRequestId,
     elapsedMs: result.latencyMs,
   });
-  context.db
-    .update(runs)
-    .set({
-      budgetChargeUsdMicros: amount,
-      providerFinishedAt: Date.now(),
-    })
-    .where(eq(runs.id, run.id))
-    .run();
   return amount;
 }
 
@@ -514,6 +486,18 @@ async function persistFinalAndChild(input: {
   }
 }
 
+async function normalizeReceiptImage(rawBytes: Buffer) {
+  try {
+    return await normalizeProviderImage(rawBytes);
+  } catch {
+    throw new AppError(
+      422,
+      "INVALID_PROVIDER_OUTPUT",
+      "The saved raw provider image is unusable.",
+    );
+  }
+}
+
 async function processReceipt(
   context: RunHandlerContext,
   run: RunRow,
@@ -548,7 +532,7 @@ async function processReceipt(
         bytes: await readAssetBytes(context.env.assetDir, normalizedRow.relativePath),
       };
     } catch {
-      const normalized = await normalizeProviderImage(rawBytes);
+      const normalized = await normalizeReceiptImage(rawBytes);
       const saved = await saveCanonicalAsset(context, run, normalized.bytes);
       context.db
         .update(runs)
@@ -558,7 +542,7 @@ async function processReceipt(
       normalizedAsset = { id: saved.id, bytes: normalized.bytes };
     }
   } else {
-    const normalized = await normalizeProviderImage(rawBytes);
+    const normalized = await normalizeReceiptImage(rawBytes);
     const saved = await saveCanonicalAsset(context, run, normalized.bytes);
     context.db
       .update(runs)
@@ -654,7 +638,7 @@ export function createEditHandler(options: EditHandlerOptions = {}): RunHandler 
 
     if (run.providerStartedAt !== null) {
       markUsageUnknown(context.db, run.id);
-      markNeedsReview(context.db, run, "The edit was dispatched but has no usable receipt.");
+      markRunNeedsReview(context.db, run.id, { message: "The edit was dispatched but has no usable receipt." });
       return;
     }
 
@@ -768,6 +752,7 @@ export function createEditHandler(options: EditHandlerOptions = {}): RunHandler 
           kind: run.executionMode,
           pricingVersion: snapshot.pricingVersion,
           capabilityVersion: snapshot.capabilityVersion,
+          reservationUsdMicros: snapshot.reservationUsdMicros,
         },
       });
       return true;
@@ -784,14 +769,14 @@ export function createEditHandler(options: EditHandlerOptions = {}): RunHandler 
       });
     } catch {
       markUsageUnknown(context.db, run.id);
-      markNeedsReview(context.db, run, "The provider outcome is unknown.");
+      markRunNeedsReview(context.db, run.id, { message: "The provider outcome is unknown." });
       return;
     }
 
     settleResult(context, run, snapshot, result);
 
     if (result.kind === "ambiguous") {
-      markNeedsReview(context.db, run, result.message);
+      markRunNeedsReview(context.db, run.id, { message: result.message });
       return;
     }
 

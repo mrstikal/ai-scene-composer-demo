@@ -76,7 +76,8 @@ function CandidateCard(input: {
     input.versions.find((version) => version.id === latest.outputVersionId) ?? null;
   const parentUrl = parentVersion === null ? null : `/api/assets/${parentVersion.imageAssetId}`;
   const finalUrl = finalVersion === null ? null : `/api/assets/${finalVersion.imageAssetId}`;
-  const rawUrl = latest.rawAssetId === null ? null : `/api/assets/${latest.rawAssetId}`;
+  const rawAssetId = latest.normalizedRawAssetId ?? latest.rawAssetId;
+  const rawUrl = rawAssetId === null ? null : `/api/assets/${rawAssetId}`;
   const activeView =
     view === "raw" && rawUrl !== null ? "raw" : finalUrl !== null ? "final" : rawUrl !== null ? "raw" : "none";
 
@@ -84,7 +85,9 @@ function CandidateCard(input: {
     <div className="space-y-3 rounded-lg border border-stone-200 bg-stone-50 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-sm font-semibold text-stone-800">{modelLabel(input.model)}</p>
+          <p className="text-sm font-semibold text-stone-800">
+            {modelLabel(input.model)} · {latest.executionMode}
+          </p>
           <p className="text-xs text-stone-500">
             {latest.status} / {latest.stage}
             {latest.providerLatencyMs !== null ? ` · ${latest.providerLatencyMs} ms` : ""}
@@ -197,7 +200,9 @@ function CandidateCard(input: {
       <dl className="space-y-1 text-xs text-stone-600">
         <div className="flex justify-between gap-2">
           <dt>Model</dt>
-          <dd className="text-right font-medium">{latest.model}</dd>
+          <dd className="text-right font-medium">
+            {latest.model} · {latest.executionMode}
+          </dd>
         </div>
         <div className="flex justify-between gap-2">
           <dt>Cost</dt>
@@ -279,7 +284,7 @@ function CandidateCard(input: {
 
       {latest.status === "succeeded" ? (
         <EvaluationForm
-          key={`evaluation-${latest.id}`}
+          key={`evaluation-${latest.id}-${JSON.stringify(latest.evaluation)}`}
           run={latest}
           busy={input.busy}
           onSave={input.onEvaluation}
@@ -306,12 +311,13 @@ export function ComparisonPanel(input: {
   onEvaluation: (runId: string, evaluation: Evaluation) => Promise<boolean>;
 }) {
   const [detail, setDetail] = useState<ComparisonDetailDto | null>(null);
+  const [detailSignature, setDetailSignature] = useState<string | null>(null);
   const [costError, setCostError] = useState<string | null>(null);
 
   const signature = input.runs
     .map(
       (run) =>
-        `${run.id}:${run.status}:${run.cost.amountUsdMicros}:${run.cost.budgetChargeUsdMicros}:${run.cost.outcome}`,
+        `${run.id}:${run.status}:${run.cost.amountUsdMicros}:${run.cost.budgetChargeUsdMicros}:${run.cost.outcome}:${JSON.stringify(run.evaluation)}`,
     )
     .join("|");
 
@@ -337,6 +343,7 @@ export function ComparisonPanel(input: {
         }
         if (!cancelled) {
           setDetail(body as ComparisonDetailDto);
+          setDetailSignature(signature);
           setCostError(null);
         }
       } catch {
@@ -350,7 +357,8 @@ export function ComparisonPanel(input: {
     };
   }, [input.groupId, signature]);
 
-  const groupRuns = detail?.runs ?? input.runs;
+  const freshDetail = detail !== null && detailSignature === signature ? detail : null;
+  const groupRuns = freshDetail?.runs ?? input.runs;
   const attempts = [...groupRuns].sort(
     (left, right) => left.createdAt - right.createdAt || left.id.localeCompare(right.id),
   );
@@ -364,8 +372,8 @@ export function ComparisonPanel(input: {
   const sharedInputIdentical =
     initialHashes.length === COMPARISON_MODELS.length &&
     new Set(initialHashes).size === 1;
-  const sharedSelection = detail?.sharedSelectionCost ?? null;
-  const candidateCost = detail?.candidateCost ?? null;
+  const sharedSelection = freshDetail?.sharedSelectionCost ?? null;
+  const candidateCost = freshDetail?.candidateCost ?? null;
 
   return (
     <section className="rounded-xl border border-stone-300 bg-white p-4">

@@ -39,20 +39,13 @@ function BucketRows(input: { buckets: CostBucketsDto }) {
 }
 
 export function CostSummary(input: { costs: ProjectCostsDto | null; error: string | null }) {
-  if (input.error !== null) {
-    return (
-      <section className="rounded-xl border border-stone-300 bg-white p-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500">Costs</h2>
-        <p className="mt-2 text-xs text-amber-800">{input.error}</p>
-      </section>
-    );
-  }
-
   if (input.costs === null) {
     return (
       <section className="rounded-xl border border-stone-300 bg-white p-4">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500">Costs</h2>
-        <p className="mt-2 text-xs text-stone-500">Loading costs...</p>
+        <p className="mt-2 text-xs text-stone-500">
+          {input.error ?? "Loading costs..."}
+        </p>
       </section>
     );
   }
@@ -63,6 +56,11 @@ export function CostSummary(input: { costs: ProjectCostsDto | null; error: strin
   return (
     <section className="rounded-xl border border-stone-300 bg-white p-4">
       <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500">Costs</h2>
+      {input.error !== null ? (
+        <p role="status" className="mt-2 text-xs text-amber-800">
+          {input.error} Showing the last known financial state.
+        </p>
+      ) : null}
       <dl className="mt-2 space-y-1 text-sm">
         <div className="flex justify-between gap-2">
           <dt className="text-stone-500">Budget limit</dt>

@@ -16,5 +16,5 @@ export async function PATCH(
     const handle = getDatabase();
     const activeVersionId = setActiveVersion(handle.db, id, input.versionId);
     return jsonResponse({ activeVersionId });
-  });
+  }, request);
 }

@@ -26,5 +26,5 @@ export async function POST(
       idempotencyKey,
     });
     return jsonResponse(stored.body, stored.status);
-  });
+  }, request);
 }

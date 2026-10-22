@@ -66,6 +66,20 @@ export async function enqueueComparison(input: {
 }): Promise<StoredIdempotentResponse> {
   const { handle, env, projectId, idempotencyKey } = input;
   const { db, sqlite } = handle;
+  const text = normalizeEditText({ targetLabel: input.targetLabel, instruction: input.instruction });
+  const requestHash = hashRequest({
+    operation: "comparison",
+    projectId,
+    parentVersionId: input.parentVersionId,
+    selectionId: input.selectionId,
+    paddingPx: input.paddingPx,
+    targetLabel: text.targetLabel,
+    instruction: text.instruction,
+    referenceAssetIds: input.referenceAssetIds,
+  });
+  const replay = replayIdempotent(findIdempotency(db, projectId, idempotencyKey), "comparison", requestHash);
+  if (replay !== null) return replay;
+
   assertCompatibleConfig();
   const pricing = getPricingConfig();
   const capabilities = getProviderCapabilities();
@@ -79,27 +93,7 @@ export async function enqueueComparison(input: {
     }
   }
 
-  const requestHash = hashRequest({
-    operation: "comparison",
-    projectId,
-    parentVersionId: input.parentVersionId,
-    selectionId: input.selectionId,
-    paddingPx: input.paddingPx,
-    targetLabel: input.targetLabel ?? null,
-    instruction: input.instruction,
-    referenceAssetIds: input.referenceAssetIds,
-    costConsent: input.costConsent,
-    executionMode,
-    pricingVersion: pricing.version,
-    capabilityVersion: capabilities.version,
-    reservationUsdMicros,
-    candidateReservationUsdMicros,
-  });
-  const replay = replayIdempotent(findIdempotency(db, projectId, idempotencyKey), "comparison", requestHash);
-  if (replay !== null) return replay;
-
   validateComparisonConsent(input.costConsent, pricing.version, reservationUsdMicros);
-  const text = normalizeEditText({ targetLabel: input.targetLabel, instruction: input.instruction });
   if (executionMode === "live" && env.openRouterApiKey === null) {
     throw new AppError(503, "PROVIDER_UNAVAILABLE", "OpenRouter is not configured.");
   }

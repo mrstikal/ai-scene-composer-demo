@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertSupportedMetadata,
   inspectImage,
+  inspectProviderImage,
   MAX_INPUT_BYTES,
   normalizeBase,
   normalizeProviderImage,
@@ -38,6 +39,15 @@ describe("image validation", () => {
     );
     await expect(inspectImage(Buffer.alloc(MAX_INPUT_BYTES + 1))).rejects.toThrow(
       "Image file is too large.",
+    );
+  });
+
+  it("rejects header-valid provider images whose pixels cannot be decoded", async () => {
+    const valid = await createTestImage({ width: 1024, height: 1024 });
+    const truncated = valid.subarray(0, Math.floor(valid.length * 0.6));
+    await expect(inspectImage(truncated)).resolves.toBeDefined();
+    await expect(inspectProviderImage(truncated)).rejects.toThrow(
+      "pixels could not be decoded",
     );
   });
 

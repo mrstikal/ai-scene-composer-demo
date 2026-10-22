@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import { sha256Hex, writeAssetBytes } from "../assets/store";
 import type { AppEnv } from "../config/env";
@@ -35,7 +35,6 @@ import {
   type ProjectRow,
   type RunRow,
   type SelectionRow,
-  type UsageEventRow,
   type VersionRow,
 } from "../db/schema";
 import { immediateTransaction } from "../db/transaction";
@@ -54,9 +53,12 @@ import {
   editInputFor,
   editMetricsFor,
   evaluationFor,
+  hasPossibleDuplicateCharge,
   inputSummaryFor,
   retryReservationUsdMicros,
   segmentInputFor,
+  type RunSummarySource,
+  type UsageSummarySource,
 } from "../runs/retry-mode";
 import type { AssetRole } from "../contracts/api";
 
@@ -131,6 +133,7 @@ function toVersionDto(row: VersionRow): VersionDto {
     imageAssetId: row.imageAssetId,
     origin: row.origin,
     originalAssetId: row.originalAssetId,
+    originatingRunId: row.originatingRunId,
     sourceMetadata: row.sourceMetadataJson,
     createdAt: row.createdAt,
   };
@@ -149,10 +152,11 @@ function toSelectionDto(row: SelectionRow): SelectionDto {
 }
 
 export function toRunSummary(
-  row: RunRow,
-  usage?: UsageEventRow,
+  row: RunSummarySource,
+  usage?: UsageSummarySource,
   imageReservationUsdMicros?: number,
   segmentationReservationUsdMicros?: number,
+  currentExecutionMode?: RunRow["executionMode"],
 ): RunSummaryDto {
   const retryMode = classifyRetryMode(row, usage);
   return {
@@ -181,7 +185,9 @@ export function toRunSummary(
       retryMode,
       imageReservationUsdMicros,
       segmentationReservationUsdMicros,
+      currentExecutionMode,
     ),
+    possibleDuplicateCharge: hasPossibleDuplicateCharge(row, usage),
     providerLatencyMs: usage?.elapsedMs ?? null,
     errorCode: row.errorCode,
     errorMessage: row.errorMessage,
@@ -203,66 +209,122 @@ export function getProjectSnapshot(
   projectId: string,
   env?: Pick<AppEnv, "imageReservationUsdMicros" | "aiMode" | "samMode">,
 ): ProjectSnapshotDto {
-  const project = getProjectOrThrow(db, projectId);
   const segmentationReservationUsdMicros =
     env === undefined || (env.aiMode === "live" && env.samMode === "live")
       ? undefined
       : 0;
-  const versionRows = db
-    .select()
-    .from(versions)
-    .where(eq(versions.projectId, projectId))
-    .orderBy(asc(versions.createdAt), asc(versions.id))
-    .all();
-  const selectionRows = db
-    .select()
-    .from(selections)
-    .where(eq(selections.projectId, projectId))
-    .orderBy(asc(selections.createdAt), asc(selections.id))
-    .all();
-  const runRows = db
-    .select()
-    .from(runs)
-    .where(eq(runs.projectId, projectId))
-    .orderBy(asc(runs.createdAt), asc(runs.id))
-    .all();
-  const usageRows = db
-    .select()
-    .from(usageEvents)
-    .where(eq(usageEvents.projectId, projectId))
-    .all();
-  const usageByRunId = new Map(usageRows.map((usage) => [usage.runId, usage]));
-  const referenceRows = db
-    .select()
-    .from(assets)
-    .where(and(eq(assets.projectId, projectId), eq(assets.kind, "reference")))
-    .orderBy(asc(assets.createdAt), asc(assets.id))
-    .all();
 
-  return {
-    project: toProjectDto(project),
-    versions: versionRows.map(toVersionDto),
-    selections: selectionRows.map(toSelectionDto),
-    references: referenceRows.map((row) => ({
-      id: row.id,
-      width: row.width,
-      height: row.height,
-      sha256: row.sha256,
-      createdAt: row.createdAt,
-    })),
-    runs: runRows.map((row) =>
-      toRunSummary(
-        row,
-        usageByRunId.get(row.id),
-        env?.imageReservationUsdMicros,
-        segmentationReservationUsdMicros,
-      ),
-    ),
-    pricing: getPublicPricing({
-      imageReservationUsdMicros: env?.imageReservationUsdMicros,
-      segmentationReservationUsdMicros,
-    }),
-  };
+  return db.transaction(
+    (tx) => {
+      const project = tx.select().from(projects).where(eq(projects.id, projectId)).get();
+      if (project === undefined) {
+        throw new AppError(404, "NOT_FOUND", "Project was not found.");
+      }
+
+      const versionRows = tx
+        .select()
+        .from(versions)
+        .where(eq(versions.projectId, projectId))
+        .orderBy(asc(versions.createdAt), asc(versions.id))
+        .all();
+      const selectionRows = tx
+        .select()
+        .from(selections)
+        .where(eq(selections.projectId, projectId))
+        .orderBy(asc(selections.createdAt), asc(selections.id))
+        .all();
+      const runRows = tx
+        .select({
+          id: runs.id,
+          projectId: runs.projectId,
+          kind: runs.kind,
+          executionMode: runs.executionMode,
+          comparisonGroupId: runs.comparisonGroupId,
+          retryOfRunId: runs.retryOfRunId,
+          parentVersionId: runs.parentVersionId,
+          inputSelectionId: runs.inputSelectionId,
+          model: runs.model,
+          inputSnapshotJson: runs.inputSnapshotJson,
+          commonInputHash: runs.commonInputHash,
+          status: runs.status,
+          stage: runs.stage,
+          reservedUsdMicros: runs.reservedUsdMicros,
+          budgetChargeUsdMicros: runs.budgetChargeUsdMicros,
+          rawAssetId: runs.rawAssetId,
+          normalizedRawAssetId: runs.normalizedRawAssetId,
+          outputSelectionId: runs.outputSelectionId,
+          outputVersionId: runs.outputVersionId,
+          metricsJson: runs.metricsJson,
+          evaluationJson: runs.evaluationJson,
+          createdAt: runs.createdAt,
+          startedAt: runs.startedAt,
+          providerStartedAt: runs.providerStartedAt,
+          providerFinishedAt: runs.providerFinishedAt,
+          finishedAt: runs.finishedAt,
+          errorCode: runs.errorCode,
+          errorMessage: runs.errorMessage,
+          providerReceiptKind: sql<"image" | "segment" | null>`json_extract(${runs.providerReceiptJson}, '$.kind')`,
+        })
+        .from(runs)
+        .where(eq(runs.projectId, projectId))
+        .orderBy(asc(runs.createdAt), asc(runs.id))
+        .all();
+      const usageRows = tx
+        .select({
+          runId: usageEvents.runId,
+          outcome: usageEvents.outcome,
+          amountUsdMicros: usageEvents.amountUsdMicros,
+          costProvenance: usageEvents.costProvenance,
+          elapsedMs: usageEvents.elapsedMs,
+          settledAt: usageEvents.settledAt,
+        })
+        .from(usageEvents)
+        .where(eq(usageEvents.projectId, projectId))
+        .all();
+      const usageByRunId = new Map(usageRows.map((usage) => [usage.runId, usage]));
+      const referenceRows = tx
+        .select()
+        .from(assets)
+        .where(and(eq(assets.projectId, projectId), eq(assets.kind, "reference")))
+        .orderBy(asc(assets.createdAt), asc(assets.id))
+        .all();
+
+      function currentExecutionModeFor(
+        kind: RunSummarySource["kind"],
+      ): RunSummarySource["executionMode"] | undefined {
+        if (env === undefined) return undefined;
+        if (kind === "segment") return env.aiMode === "mock" ? "mock" : env.samMode;
+        return env.aiMode;
+      }
+
+      return {
+        project: toProjectDto(project),
+        versions: versionRows.map(toVersionDto),
+        selections: selectionRows.map(toSelectionDto),
+        references: referenceRows.map((row) => ({
+          id: row.id,
+          width: row.width,
+          height: row.height,
+          sha256: row.sha256,
+          createdAt: row.createdAt,
+        })),
+        runs: runRows.map((row) =>
+          toRunSummary(
+            row,
+            usageByRunId.get(row.id),
+            env?.imageReservationUsdMicros,
+            segmentationReservationUsdMicros,
+            currentExecutionModeFor(row.kind),
+          ),
+        ),
+        pricing: getPublicPricing({
+          imageReservationUsdMicros: env?.imageReservationUsdMicros,
+          segmentationReservationUsdMicros,
+        }),
+      };
+    },
+    { behavior: "deferred" },
+  );
 }
 
 export function setActiveVersion(

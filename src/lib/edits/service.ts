@@ -361,37 +361,32 @@ export async function enqueueEdit(input: {
 }): Promise<StoredIdempotentResponse> {
   const { handle, env, projectId, idempotencyKey } = input;
   const { db, sqlite } = handle;
-  assertCompatibleConfig();
-  const pricing = getPricingConfig();
-  const capabilities = getProviderCapabilities();
-  const executionMode = editExecutionMode(env);
-  const reservationUsdMicros = editReservationUsdMicros(env);
   const model = requireEditModel(input.model);
-  if (pricing.providers.openrouter.models[model] === undefined) {
-    throw new AppError(503, "PROVIDER_UNAVAILABLE", "The selected edit model is not configured.");
-  }
-
+  const text = normalizeEditText({ targetLabel: input.targetLabel, instruction: input.instruction });
   const requestHash = hashRequest({
     operation: "edit",
     projectId,
     parentVersionId: input.parentVersionId,
     selectionId: input.selectionId,
     paddingPx: input.paddingPx,
-    targetLabel: input.targetLabel ?? null,
-    instruction: input.instruction,
+    targetLabel: text.targetLabel,
+    instruction: text.instruction,
     referenceAssetIds: input.referenceAssetIds,
     model,
-    costConsent: input.costConsent,
-    executionMode,
-    pricingVersion: pricing.version,
-    capabilityVersion: capabilities.version,
-    reservationUsdMicros,
   });
   const replay = replayIdempotent(findIdempotency(db, projectId, idempotencyKey), "edit", requestHash);
   if (replay !== null) return replay;
 
+  assertCompatibleConfig();
+  const pricing = getPricingConfig();
+  const capabilities = getProviderCapabilities();
+  const executionMode = editExecutionMode(env);
+  const reservationUsdMicros = editReservationUsdMicros(env);
+  if (pricing.providers.openrouter.models[model] === undefined) {
+    throw new AppError(503, "PROVIDER_UNAVAILABLE", "The selected edit model is not configured.");
+  }
+
   validateConsent(input.costConsent, pricing.version, reservationUsdMicros);
-  const text = normalizeEditText({ targetLabel: input.targetLabel, instruction: input.instruction });
   if (executionMode === "live" && env.openRouterApiKey === null) {
     throw new AppError(503, "PROVIDER_UNAVAILABLE", "OpenRouter is not configured.");
   }

@@ -50,7 +50,8 @@ function ResultCard(input: {
     input.versions.find((version) => version.id === input.run.outputVersionId) ?? null;
   const parentUrl = parentVersion === null ? null : `/api/assets/${parentVersion.imageAssetId}`;
   const finalUrl = finalVersion === null ? null : `/api/assets/${finalVersion.imageAssetId}`;
-  const rawUrl = input.run.rawAssetId === null ? null : `/api/assets/${input.run.rawAssetId}`;
+  const rawAssetId = input.run.normalizedRawAssetId ?? input.run.rawAssetId;
+  const rawUrl = rawAssetId === null ? null : `/api/assets/${rawAssetId}`;
   const activeView = view === "raw" && rawUrl !== null ? "raw" : "final";
 
   return (
@@ -58,7 +59,7 @@ function ResultCard(input: {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-xs font-medium text-stone-700">
-            Edit {shortId(input.run.id)} · {input.run.model}
+            Edit {shortId(input.run.id)} · {input.run.model} · {input.run.executionMode}
           </p>
           <p className="text-xs text-stone-500">
             {input.run.status}
@@ -190,7 +191,7 @@ function ResultCard(input: {
 
       {input.run.status === "succeeded" ? (
         <EvaluationForm
-          key={input.run.id}
+          key={`${input.run.id}:${JSON.stringify(input.run.evaluation)}`}
           run={input.run}
           busy={input.busy}
           onSave={input.onEvaluation}

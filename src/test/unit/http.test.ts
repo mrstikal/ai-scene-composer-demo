@@ -5,6 +5,7 @@ import {
   MAX_JSON_BYTES,
   MAX_MULTIPART_BYTES,
   MAX_UPLOAD_BYTES,
+  assertSameOrigin,
   parseAssetForm,
   readJsonBody,
   readMultipartForm,
@@ -135,5 +136,46 @@ describe("bounded multipart bodies", () => {
     await expect(parseAssetForm(badRole)).rejects.toThrow(
       "The role field must be base or reference.",
     );
+  });
+});
+
+describe("same-origin boundary", () => {
+  it("allows loopback host and matching loopback origin", () => {
+    expect(() =>
+      assertSameOrigin(
+        new Request("http://127.0.0.1:3000/api/projects", {
+          headers: { host: "127.0.0.1:3000", origin: "http://127.0.0.1:3000" },
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects DNS-rebinding hosts and cross-origin mutations", () => {
+    expect(() =>
+      assertSameOrigin(
+        new Request("http://evil.example/api/projects", {
+          method: "POST",
+          headers: { host: "evil.example", origin: "http://evil.example" },
+        }),
+      ),
+    ).toThrow("only accepts loopback");
+
+    expect(() =>
+      assertSameOrigin(
+        new Request("http://127.0.0.1:3000/api/projects", {
+          method: "POST",
+          headers: { host: "127.0.0.1:3000", origin: "http://evil.example" },
+        }),
+      ),
+    ).toThrow("Cross-origin");
+
+    expect(() =>
+      assertSameOrigin(
+        new Request("http://127.0.0.1:3000/api/projects", {
+          method: "POST",
+          headers: { host: "127.0.0.1:3000", origin: "https://127.0.0.1:3000" },
+        }),
+      ),
+    ).toThrow("Cross-origin");
   });
 });

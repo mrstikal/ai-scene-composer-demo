@@ -25,6 +25,7 @@ import {
 } from "../idempotency/service";
 import { assertProjectCanCreateRoot } from "../projects/service";
 import {
+  segmentationCalculatedCostUsdMicros,
   segmentationExecutionMode,
   segmentationReservationUsdMicros,
 } from "../segmentations/service";
@@ -33,6 +34,18 @@ import { buildEditCommonInputHash } from "../edits/common-input";
 import { assertReservationAllowed } from "../budget/service";
 import { getUsageEventByRunId } from "../usage/service";
 import { classifyRetryMode } from "./retry-mode";
+
+function replayStored(
+  existing: Parameters<typeof replayIdempotent>[0],
+  operation: string,
+  requestHash: string,
+): StoredIdempotentResponse {
+  const replay = replayIdempotent(existing, operation, requestHash);
+  if (replay === null) {
+    throw new AppError(409, "IDEMPOTENCY_CONFLICT", "The stored idempotency response is unavailable.");
+  }
+  return replay;
+}
 
 export function getRunOrThrow(db: DatabaseHandle["db"], runId: string): RunRow {
   const run = db.select().from(runs).where(eq(runs.id, runId)).get();
@@ -65,8 +78,26 @@ export async function enqueueRetry(input: {
 }): Promise<StoredIdempotentResponse> {
   const { handle, env, runId, costConsent, acknowledgePossibleDuplicateCharge, idempotencyKey } = input;
   const { db, sqlite } = handle;
-  assertCompatibleConfig();
   const original = getRunOrThrow(db, runId);
+
+  const localRequestHash = hashRequest({ operation: "retry_local", runId });
+  const providerRequestHash = hashRequest({
+    operation: "retry_provider",
+    runId,
+    acknowledgePossibleDuplicateCharge,
+  });
+  const existingRecord = findIdempotency(db, original.projectId, idempotencyKey);
+  if (existingRecord !== undefined) {
+    if (existingRecord.operation === "retry_local") {
+      return replayStored(existingRecord, "retry_local", localRequestHash);
+    }
+    if (existingRecord.operation === "retry_provider") {
+      return replayStored(existingRecord, "retry_provider", providerRequestHash);
+    }
+    return replayStored(existingRecord, existingRecord.operation, "__not_a_retry__");
+  }
+
+  assertCompatibleConfig();
   const usage = getUsageEventByRunId(db, runId);
   const retryMode = classifyRetryMode(original, usage);
   const pricing = getPricingConfig();
@@ -79,7 +110,7 @@ export async function enqueueRetry(input: {
   if (retryMode === "local") {
     validateRetryConsent(costConsent, pricing.version, 0);
     const operation = "retry_local";
-    const requestHash = hashRequest({ operation, runId, costConsent });
+    const requestHash = localRequestHash;
     const replay = replayIdempotent(findIdempotency(db, original.projectId, idempotencyKey), operation, requestHash);
     if (replay !== null) return replay;
 
@@ -186,6 +217,7 @@ export async function enqueueRetry(input: {
       pricingVersion: pricing.version,
       capabilityVersion: capabilities.version,
       reservationUsdMicros,
+      calculatedCostUsdMicros: segmentationCalculatedCostUsdMicros(env),
       capture: null,
     });
     commonInputHash = null;
@@ -219,13 +251,7 @@ export async function enqueueRetry(input: {
     commonInputHash = parsedGeneration.promptSha256;
   }
   const operation = "retry_provider";
-  const requestHash = hashRequest({
-    operation,
-    runId,
-    costConsent,
-    acknowledgePossibleDuplicateCharge,
-    snapshot,
-  });
+  const requestHash = providerRequestHash;
   const replay = replayIdempotent(findIdempotency(db, original.projectId, idempotencyKey), operation, requestHash);
   if (replay !== null) return replay;
 

@@ -455,6 +455,8 @@ describe("live SAM cost and failure settlement", () => {
       executionMode: "live",
       cost: { reservedUsdMicros: 2500, budgetChargeUsdMicros: 2500 },
     });
+    const runRow = testEnv.handle.db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(runRow?.inputSnapshotJson).toMatchObject({ calculatedCostUsdMicros: 2500 });
     const usage = getUsageEventByRunId(testEnv.handle.db, runId);
     expect(usage).toMatchObject({
       operation: "segment",
@@ -466,6 +468,53 @@ describe("live SAM cost and failure settlement", () => {
       providerRequestId: "req_live",
       elapsedMs: 25,
     });
+    expect(usage?.pricingSourceSnapshotJson).toMatchObject({
+      reservationUsdMicros: 2500,
+      calculatedCostUsdMicros: 2500,
+    });
+  });
+
+  it("freezes a cost for legacy queued snapshots that predate the stored rate", async () => {
+    const { projectId, rootVersionId } = await sampleProject();
+    const env = liveEnv();
+    const positive = { x: 420, y: 610 };
+    const stored = await enqueue(projectId, rootVersionId, positive, {
+      env,
+      reservation: 2500,
+    });
+    const runId = (stored.body as { runId: string }).runId;
+    const runRow = testEnv.handle.db.select().from(runs).where(eq(runs.id, runId)).get();
+    const legacySnapshot = {
+      ...(runRow?.inputSnapshotJson as Record<string, unknown>),
+    };
+    delete legacySnapshot.calculatedCostUsdMicros;
+    testEnv.handle.db
+      .update(runs)
+      .set({ inputSnapshotJson: legacySnapshot })
+      .where(eq(runs.id, runId))
+      .run();
+
+    const fullMask = buildMockMask({ positive, negative: null });
+    await runSegment(
+      () => ({
+        segment: async () => ({
+          kind: "mask",
+          representation: "full-mask",
+          fullMask,
+          width: 1024,
+          height: 1024,
+          providerRequestId: "req_legacy",
+          observedCostUsdMicros: null,
+          usage: null,
+          latencyMs: 25,
+        }),
+      }),
+      env,
+    );
+
+    const updated = testEnv.handle.db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(updated?.status).toBe("succeeded");
+    expect(updated?.inputSnapshotJson).toMatchObject({ calculatedCostUsdMicros: 2500 });
   });
 
   it("charges a completed response even when the returned mask is invalid", async () => {

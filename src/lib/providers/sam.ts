@@ -192,9 +192,10 @@ export async function parseSamEvents(
     height: number;
     positive: Point;
     negative: Point | null;
+    startedAt?: number;
   },
 ): Promise<SegmentationAdapterResult> {
-  const startedAt = Date.now();
+  const startedAt = input.startedAt ?? Date.now();
   const terminal: ObservedTerminal = {
     completed: null,
     failed: false,
@@ -324,36 +325,86 @@ export async function callMetaSam(
     maxRetries: 0,
   });
 
-  let stream: AsyncIterable<ResponsesEvent>;
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, META_SAM_TIMEOUT_MS);
+  timer.unref();
+
   try {
-    stream = (await client.responses.create({
-      model: SAM_MODEL,
-      input: [
+    let stream: AsyncIterable<ResponsesEvent>;
+    try {
+      stream = (await client.responses.create(
         {
-          role: "user",
-          content: [
-            { type: "input_text", text: input.prompt },
+          model: SAM_MODEL,
+          input: [
             {
-              type: "input_image",
-              image_url: `data:image/png;base64,${input.image.toString("base64")}`,
-              detail: "auto",
+              role: "user",
+              content: [
+                { type: "input_text", text: input.prompt },
+                {
+                  type: "input_image",
+                  image_url: `data:image/png;base64,${input.image.toString("base64")}`,
+                  detail: "auto",
+                },
+              ],
             },
           ],
+          stream: true,
+          metadata: { mask_encoding: "one_bit" },
         },
-      ],
-      stream: true,
-      metadata: { mask_encoding: "one_bit" },
-    })) as unknown as AsyncIterable<ResponsesEvent>;
-  } catch (error) {
-    return classifyTransportError(error, startedAt);
-  }
+        { signal: controller.signal },
+      )) as unknown as AsyncIterable<ResponsesEvent>;
+    } catch (error) {
+      if (timedOut) {
+        return ambiguousResult(
+          "Meta SAM request timed out before a definitive response.",
+          {
+            providerRequestId: null,
+            usage: null,
+            observedCostUsdMicros: null,
+            latencyMs: Date.now() - startedAt,
+          },
+          "PROVIDER_TIMEOUT",
+        );
+      }
+      return classifyTransportError(error, startedAt);
+    }
 
-  return parseSamEvents(stream, {
-    width: input.width,
-    height: input.height,
-    positive: input.positive,
-    negative: input.negative,
-  });
+    const parsed = parseSamEvents(stream, {
+      width: input.width,
+      height: input.height,
+      positive: input.positive,
+      negative: input.negative,
+      startedAt,
+    });
+    const deadline = new Promise<SegmentationAdapterResult>((resolve) => {
+      controller.signal.addEventListener(
+        "abort",
+        () => {
+          resolve(
+            ambiguousResult(
+              "Meta SAM request timed out before a definitive response.",
+              {
+                providerRequestId: null,
+                usage: null,
+                observedCostUsdMicros: null,
+                latencyMs: Date.now() - startedAt,
+              },
+              "PROVIDER_TIMEOUT",
+            ),
+          );
+        },
+        { once: true },
+      );
+    });
+
+    return await Promise.race([parsed, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export const metaSamAdapter = {

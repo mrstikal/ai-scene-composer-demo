@@ -31,7 +31,7 @@ export function assertReservationAllowed(
   }
 
   const commitment = getProjectCommitmentMicros(db, projectId);
-  if (commitment + reservationUsdMicros > project.budgetLimitUsdMicros) {
+  if (reservationUsdMicros > 0 && commitment + reservationUsdMicros > project.budgetLimitUsdMicros) {
     throw new AppError(402, "BUDGET_EXCEEDED", "The project budget would be exceeded.");
   }
 

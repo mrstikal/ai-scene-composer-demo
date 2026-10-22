@@ -16,5 +16,5 @@ export async function PATCH(
     const handle = getDatabase();
     const saved = saveRunEvaluation(handle.db, id, evaluation);
     return jsonResponse({ evaluation: saved });
-  });
+  }, request);
 }

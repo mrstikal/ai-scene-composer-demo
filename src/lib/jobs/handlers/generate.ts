@@ -2,13 +2,12 @@ import { randomUUID } from "node:crypto";
 
 import { and, eq, isNull } from "drizzle-orm";
 
-import { readAssetBytes, writeAssetBytes } from "../../assets/store";
+import { readAssetBytes, sha256Hex, writeAssetBytes } from "../../assets/store";
 import {
   generationSnapshotSchema,
   type GenerationSnapshot,
   type GenerationSourceMetadata,
 } from "../../contracts/domain";
-import type { AppDatabase } from "../../db/client";
 import { assets, projects, runs, versions, type RunRow } from "../../db/schema";
 import { immediateTransaction } from "../../db/transaction";
 import { AppError } from "../../errors";
@@ -18,7 +17,8 @@ import { getProjectCommitmentMicros } from "../../budget/service";
 import { markRunFailed } from "../queue";
 import { parseProviderReceipt } from "../receipt";
 import type { RunHandler, RunHandlerContext } from "../worker";
-import { createPendingUsageEvent, markUsageUnknown, settleUsageEvent } from "../../usage/service";
+import { createPendingUsageEvent, markUsageUnknown } from "../../usage/service";
+import { markRunNeedsReview, settleRunAttempt } from "../settlement";
 import { createGenerationAdapter } from "../../providers/factory";
 import type { ImageGenerationAdapter, ImageGenerationResult } from "../../providers/types";
 
@@ -63,58 +63,29 @@ function settleResult(
 
   if (result.kind === "rejected") {
     const amount = observed ?? 0;
-    settleUsageEvent(context.db, {
-      runId: run.id,
+    settleRunAttempt(context, run.id, {
       outcome: "rejected",
       amountUsdMicros: amount,
       costProvenance: mock ? "calculated" : observed === null ? "calculated" : "provider",
+      chargeUsdMicros: amount,
       usageJson: result.usage,
       providerRequestId: result.providerRequestId,
       elapsedMs: result.latencyMs,
     });
-    context.db
-      .update(runs)
-      .set({
-        budgetChargeUsdMicros: amount,
-        providerFinishedAt: Date.now(),
-      })
-      .where(eq(runs.id, run.id))
-      .run();
     return amount;
   }
 
   const amount = mock ? 0 : observed ?? snapshot.reservationUsdMicros;
-  settleUsageEvent(context.db, {
-    runId: run.id,
+  settleRunAttempt(context, run.id, {
     outcome: "completed",
     amountUsdMicros: amount,
     costProvenance: mock ? "calculated" : observed !== null ? "provider" : "estimated",
+    chargeUsdMicros: amount,
     usageJson: result.usage,
     providerRequestId: result.providerRequestId,
     elapsedMs: result.latencyMs,
   });
-  context.db
-    .update(runs)
-    .set({
-      budgetChargeUsdMicros: amount,
-      providerFinishedAt: Date.now(),
-    })
-    .where(eq(runs.id, run.id))
-    .run();
   return amount;
-}
-
-function markNeedsReview(db: AppDatabase, run: RunRow, message: string): void {
-  db.update(runs)
-    .set({
-      status: "needs_review",
-      stage: "error",
-      finishedAt: Date.now(),
-      errorCode: "INTERRUPTED",
-      errorMessage: message,
-    })
-    .where(eq(runs.id, run.id))
-    .run();
 }
 
 async function saveRawAsset(
@@ -282,21 +253,12 @@ async function persistImage(
     width: result.width,
     height: result.height,
   });
-  const normalized = await normalizeProviderImage(result.bytes);
-  const canonicalAssetId = await saveCanonicalAsset(
-    context,
-    run,
-    normalized.bytes,
-    normalized.width,
-    normalized.height,
-  );
 
   immediateTransaction(context.sqlite, () => {
     context.db
       .update(runs)
       .set({
         rawAssetId,
-        normalizedRawAssetId: canonicalAssetId,
         providerReceiptJson: {
           kind: "image",
           complete: true,
@@ -316,6 +278,30 @@ async function persistImage(
       .where(eq(runs.id, run.id))
       .run();
   });
+
+  let normalized;
+  try {
+    normalized = await normalizeProviderImage(result.bytes);
+  } catch {
+    throw new AppError(
+      422,
+      "INVALID_PROVIDER_OUTPUT",
+      "The provider image is unusable after receipt persistence.",
+    );
+  }
+  const canonicalAssetId = await saveCanonicalAsset(
+    context,
+    run,
+    normalized.bytes,
+    normalized.width,
+    normalized.height,
+  );
+
+  context.db
+    .update(runs)
+    .set({ normalizedRawAssetId: canonicalAssetId, stage: "processing" })
+    .where(eq(runs.id, run.id))
+    .run();
 
   installRoot(context, run, snapshot, rawAssetId, canonicalAssetId);
 }
@@ -367,16 +353,17 @@ async function resumeFromReceipt(
       .from(assets)
       .where(eq(assets.id, run.normalizedRawAssetId))
       .get();
-    if (normalizedAsset === undefined) {
-      markRunFailed(context.db, run, {
-        code: "INVALID_PROVIDER_OUTPUT",
-        message: "The saved normalized provider asset is missing.",
-        preProvider: false,
-      });
-      return;
+    if (normalizedAsset !== undefined) {
+      try {
+        const bytes = await readAssetBytes(context.env.assetDir, normalizedAsset.relativePath);
+        if (sha256Hex(bytes) === normalizedAsset.sha256) {
+          installRoot(context, run, snapshot, receipt.rawAssetId, run.normalizedRawAssetId);
+          return;
+        }
+      } catch {
+        // Fall through and rebuild the canonical asset from the raw provider bytes.
+      }
     }
-    installRoot(context, run, snapshot, receipt.rawAssetId, run.normalizedRawAssetId);
-    return;
   }
 
   const rawAsset = context.db.select().from(assets).where(eq(assets.id, receipt.rawAssetId)).get();
@@ -448,11 +435,9 @@ export function createGenerateHandler(options: GenerateHandlerOptions = {}): Run
 
     if (run.providerStartedAt !== null) {
       markUsageUnknown(context.db, run.id);
-      markNeedsReview(
-        context.db,
-        run,
-        "The generation was dispatched but has no usable receipt.",
-      );
+      markRunNeedsReview(context.db, run.id, {
+        message: "The generation was dispatched but has no usable receipt.",
+      });
       return;
     }
 
@@ -554,6 +539,7 @@ export function createGenerateHandler(options: GenerateHandlerOptions = {}): Run
           kind: run.executionMode,
           pricingVersion: snapshot.pricingVersion,
           capabilityVersion: snapshot.capabilityVersion,
+          reservationUsdMicros: snapshot.reservationUsdMicros,
         },
       });
       return true;
@@ -569,14 +555,14 @@ export function createGenerateHandler(options: GenerateHandlerOptions = {}): Run
       });
     } catch {
       markUsageUnknown(context.db, run.id);
-      markNeedsReview(context.db, run, "The provider outcome is unknown.");
+      markRunNeedsReview(context.db, run.id, { message: "The provider outcome is unknown." });
       return;
     }
 
     settleResult(context, run, snapshot, result);
 
     if (result.kind === "ambiguous") {
-      markNeedsReview(context.db, run, result.message);
+      markRunNeedsReview(context.db, run.id, { message: result.message });
       return;
     }
 
@@ -592,7 +578,15 @@ export function createGenerateHandler(options: GenerateHandlerOptions = {}): Run
           preProvider: false,
         });
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof AppError && error.code === "INVALID_PROVIDER_OUTPUT") {
+        markRunFailed(context.db, run, {
+          code: "INVALID_PROVIDER_OUTPUT",
+          message: error.message,
+          preProvider: false,
+        });
+        return;
+      }
       markRunFailed(context.db, run, {
         code: "LOCAL_PROCESSING_FAILED",
         message: "Local generation processing failed.",

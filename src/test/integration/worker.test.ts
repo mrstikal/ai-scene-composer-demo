@@ -3,7 +3,7 @@ import * as lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { runs } from "@/lib/db/schema";
-import { claimNextRun, recoverRunningRuns } from "@/lib/jobs/queue";
+import { claimNextRun, markRunFailed, recoverRunningRuns } from "@/lib/jobs/queue";
 import { runOnce } from "@/lib/jobs/worker";
 import {
   createPendingUsageEvent,
@@ -88,6 +88,30 @@ describe("worker claim and run-once", () => {
   });
 });
 
+describe("failure settlement", () => {
+  it("does not overwrite a charge settled after the claim row was read", () => {
+    const project = createProject(testEnv.handle.db, testEnv.env, "Stale Charge");
+    const claimed = insertRun(testEnv.handle.db, project.id, {
+      reservedUsdMicros: 250_000,
+      budgetChargeUsdMicros: 0,
+    });
+    testEnv.handle.db
+      .update(runs)
+      .set({ providerStartedAt: Date.now(), budgetChargeUsdMicros: 180_000 })
+      .where(eq(runs.id, claimed.id))
+      .run();
+
+    markRunFailed(testEnv.handle.db, claimed, {
+      code: "PROVIDER_ERROR",
+      message: "failed after dispatch",
+      preProvider: true,
+    });
+
+    const stored = testEnv.handle.db.select().from(runs).where(eq(runs.id, claimed.id)).get();
+    expect(stored?.budgetChargeUsdMicros).toBe(180_000);
+  });
+});
+
 describe("startup recovery", () => {
   it("returns a run without provider invocation to the queue", () => {
     const project = createProject(testEnv.handle.db, testEnv.env, "Recovery 1");
@@ -124,6 +148,45 @@ describe("startup recovery", () => {
     const stored = testEnv.handle.db.select().from(runs).where(eq(runs.id, run.id)).get();
     expect(stored?.status).toBe("queued");
     expect(stored?.stage).toBe("processing");
+  });
+
+  it("does not treat a missing receipt artifact file as complete", () => {
+    const project = createProject(testEnv.handle.db, testEnv.env, "Recovery Missing File");
+    const asset = insertAssetRow(testEnv.handle.db, project.id);
+    const run = insertRun(testEnv.handle.db, project.id, {
+      status: "running",
+      stage: "calling_provider",
+      startedAt: Date.now(),
+      providerStartedAt: Date.now(),
+      providerReceiptJson: {
+        kind: "image",
+        complete: true,
+        rawAssetId: asset.id,
+        responseMetadata: {},
+      },
+    });
+    createPendingUsageEvent(testEnv.handle.db, {
+      projectId: project.id,
+      runId: run.id,
+      operation: "generate",
+      provider: "openrouter",
+      model: "mock",
+      executionMode: "mock",
+      pricingVersion: "2026-10-21-v1",
+      pricingSourceSnapshot: {},
+    });
+    settleUsageEvent(testEnv.handle.db, {
+      runId: run.id,
+      outcome: "completed",
+      amountUsdMicros: 0,
+      costProvenance: "calculated",
+    });
+
+    expect(recoverRunningRuns(testEnv.handle.db, testEnv.env.assetDir)).toBe(1);
+    const stored = testEnv.handle.db.select().from(runs).where(eq(runs.id, run.id)).get();
+    expect(stored?.status).toBe("failed");
+    expect(stored?.errorCode).toBe("LOCAL_PROCESSING_FAILED");
+    expect(stored?.stage).toBe("error");
   });
 
   it("marks a settled completion without a receipt as local processing failure", () => {

@@ -34,7 +34,7 @@ export function claimNextRun(db: AppDatabase): RunRow | null {
   );
 }
 
-export function recoverRunningRuns(db: AppDatabase): number {
+export function recoverRunningRuns(db: AppDatabase, assetDir?: string): number {
   const running = db.select().from(runs).where(eq(runs.status, "running")).all();
   let changed = 0;
 
@@ -54,7 +54,7 @@ export function recoverRunningRuns(db: AppDatabase): number {
       continue;
     }
 
-    if (isCompleteReceipt(db, run.providerReceiptJson)) {
+    if (isCompleteReceipt(db, run.providerReceiptJson, assetDir)) {
       db.update(runs)
         .set({
           status: "queued",
@@ -123,7 +123,8 @@ export function markRunFailed(
   run: RunRow,
   input: { code: string; message: string; preProvider: boolean },
 ): void {
-  const releaseReservation = input.preProvider && run.providerStartedAt === null;
+  const current = db.select().from(runs).where(eq(runs.id, run.id)).get() ?? run;
+  const releaseReservation = input.preProvider && current.providerStartedAt === null;
   db.update(runs)
     .set({
       status: "failed",
@@ -131,7 +132,7 @@ export function markRunFailed(
       finishedAt: Date.now(),
       errorCode: input.code,
       errorMessage: input.message,
-      budgetChargeUsdMicros: releaseReservation ? 0 : run.budgetChargeUsdMicros,
+      budgetChargeUsdMicros: releaseReservation ? 0 : current.budgetChargeUsdMicros,
     })
     .where(eq(runs.id, run.id))
     .run();

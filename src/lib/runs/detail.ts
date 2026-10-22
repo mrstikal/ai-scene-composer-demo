@@ -15,11 +15,20 @@ export function getRunDetail(
   const usage = getUsageEventByRunId(db, runId);
   const segmentationReservationUsdMicros =
     env === undefined || (env.aiMode === "live" && env.samMode === "live") ? undefined : 0;
+  const currentExecutionMode =
+    env === undefined
+      ? undefined
+      : run.kind === "segment"
+        ? env.aiMode === "mock"
+          ? "mock"
+          : env.samMode
+        : env.aiMode;
   const summary = toRunSummary(
     run,
     usage,
     env?.imageReservationUsdMicros,
     segmentationReservationUsdMicros,
+    currentExecutionMode,
   );
 
   let input: RunDetailDto["input"] = null;

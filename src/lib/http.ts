@@ -27,8 +27,54 @@ export function errorResponse(error: unknown): Response {
   return jsonResponse(body, status);
 }
 
-export async function route(handler: () => Promise<Response>): Promise<Response> {
+const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+function parseHostname(host: string): string | null {
   try {
+    return new URL(`http://${host}`).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return LOOPBACK_HOSTNAMES.has(hostname.toLowerCase());
+}
+
+export function assertSameOrigin(request: Request): void {
+  const urlHost = new URL(request.url).host;
+  const host = request.headers.get("host") ?? urlHost;
+  const hostname = parseHostname(host);
+  if (hostname === null || !isLoopbackHostname(hostname)) {
+    throw new AppError(403, "INVALID_REQUEST", "The application only accepts loopback requests.");
+  }
+
+  const origin = request.headers.get("origin");
+  if (origin === null) return;
+
+  let originUrl: URL;
+  try {
+    originUrl = new URL(origin);
+  } catch {
+    throw new AppError(403, "INVALID_REQUEST", "The request origin is invalid.");
+  }
+  const expectedOrigin = `${new URL(request.url).protocol}//${host}`;
+  if (
+    originUrl.origin !== expectedOrigin ||
+    !isLoopbackHostname(originUrl.hostname)
+  ) {
+    throw new AppError(403, "INVALID_REQUEST", "Cross-origin requests are not allowed.");
+  }
+}
+
+export async function route(
+  handler: () => Promise<Response>,
+  request?: Request,
+): Promise<Response> {
+  try {
+    if (request !== undefined) {
+      assertSameOrigin(request);
+    }
     return await handler();
   } catch (error) {
     return errorResponse(error);

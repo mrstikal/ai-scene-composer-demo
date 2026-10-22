@@ -7,10 +7,39 @@ import type {
   ProjectCostTotalsDto,
 } from "../contracts/api";
 import type { AppDatabase } from "../db/client";
-import { runs, usageEvents, type RunRow, type UsageEventRow } from "../db/schema";
-import { getProjectOrThrow } from "../projects/service";
+import {
+  projects,
+  runs,
+  usageEvents,
+  type RunRow,
+  type UsageEventRow,
+} from "../db/schema";
+import { AppError } from "../errors";
 
 const OPERATION_ORDER: Array<RunRow["kind"]> = ["generate", "segment", "edit"];
+
+type CostRunRow = Pick<
+  RunRow,
+  "id" | "projectId" | "kind" | "model" | "status" | "budgetChargeUsdMicros"
+>;
+
+type CostUsageRow = Pick<
+  UsageEventRow,
+  | "id"
+  | "runId"
+  | "operation"
+  | "provider"
+  | "model"
+  | "executionMode"
+  | "outcome"
+  | "amountUsdMicros"
+  | "costProvenance"
+  | "pricingVersion"
+  | "providerRequestId"
+  | "elapsedMs"
+  | "createdAt"
+  | "settledAt"
+>;
 
 export function emptyCostBuckets(): CostBucketsDto {
   return {
@@ -34,8 +63,8 @@ function bucketTotal(buckets: CostBucketsDto): number {
 
 export function accumulateRunCost(
   buckets: CostBucketsDto,
-  run: RunRow,
-  usage: UsageEventRow | undefined,
+  run: CostRunRow,
+  usage: CostUsageRow | undefined,
 ): void {
   if (usage !== undefined && usage.settledAt !== null) {
     if (usage.amountUsdMicros !== null) {
@@ -73,8 +102,8 @@ function reconcileBuckets(buckets: CostBucketsDto, chargeSum: number): CostBucke
 }
 
 function bucketsForRuns(
-  groupRuns: RunRow[],
-  usageByRunId: Map<string, UsageEventRow>,
+  groupRuns: CostRunRow[],
+  usageByRunId: Map<string, CostUsageRow>,
 ): CostBucketsDto {
   const buckets = emptyCostBuckets();
   let chargeSum = 0;
@@ -85,7 +114,7 @@ function bucketsForRuns(
   return reconcileBuckets(buckets, chargeSum);
 }
 
-function toCostEvent(usage: UsageEventRow): CostEventDto {
+function toCostEvent(usage: CostUsageRow): CostEventDto {
   return {
     id: usage.id,
     runId: usage.runId,
@@ -105,60 +134,91 @@ function toCostEvent(usage: UsageEventRow): CostEventDto {
 }
 
 export function getProjectCosts(db: AppDatabase, projectId: string): ProjectCostsDto {
-  const project = getProjectOrThrow(db, projectId);
-  const runRows = db
-    .select()
-    .from(runs)
-    .where(eq(runs.projectId, projectId))
-    .orderBy(asc(runs.createdAt), asc(runs.id))
-    .all();
-  const usageRows = db
-    .select()
-    .from(usageEvents)
-    .where(eq(usageEvents.projectId, projectId))
-    .orderBy(asc(usageEvents.createdAt), asc(usageEvents.id))
-    .all();
-  const usageByRunId = new Map(usageRows.map((usage) => [usage.runId, usage]));
+  return db.transaction(
+    (tx) => {
+      const project = tx.select().from(projects).where(eq(projects.id, projectId)).get();
+      if (project === undefined) {
+        throw new AppError(404, "NOT_FOUND", "Project was not found.");
+      }
 
-  const totalsBuckets = bucketsForRuns(runRows, usageByRunId);
-  const commitmentUsdMicros = bucketTotal(totalsBuckets);
-  const totals: ProjectCostTotalsDto = {
-    ...totalsBuckets,
-    commitmentUsdMicros,
-    budgetLimitUsdMicros: project.budgetLimitUsdMicros,
-    remainingUsdMicros: Math.max(0, project.budgetLimitUsdMicros - commitmentUsdMicros),
-    overrunUsdMicros: Math.max(0, commitmentUsdMicros - project.budgetLimitUsdMicros),
-  };
+      const runRows = tx
+        .select({
+          id: runs.id,
+          projectId: runs.projectId,
+          kind: runs.kind,
+          model: runs.model,
+          status: runs.status,
+          budgetChargeUsdMicros: runs.budgetChargeUsdMicros,
+        })
+        .from(runs)
+        .where(eq(runs.projectId, projectId))
+        .orderBy(asc(runs.createdAt), asc(runs.id))
+        .all();
+      const usageRows = tx
+        .select({
+          id: usageEvents.id,
+          runId: usageEvents.runId,
+          operation: usageEvents.operation,
+          provider: usageEvents.provider,
+          model: usageEvents.model,
+          executionMode: usageEvents.executionMode,
+          outcome: usageEvents.outcome,
+          amountUsdMicros: usageEvents.amountUsdMicros,
+          costProvenance: usageEvents.costProvenance,
+          pricingVersion: usageEvents.pricingVersion,
+          providerRequestId: usageEvents.providerRequestId,
+          elapsedMs: usageEvents.elapsedMs,
+          createdAt: usageEvents.createdAt,
+          settledAt: usageEvents.settledAt,
+        })
+        .from(usageEvents)
+        .where(eq(usageEvents.projectId, projectId))
+        .orderBy(asc(usageEvents.createdAt), asc(usageEvents.id))
+        .all();
+      const usageByRunId = new Map(usageRows.map((usage) => [usage.runId, usage]));
 
-  const operations = new Map<RunRow["kind"], RunRow[]>();
-  const models = new Map<string, RunRow[]>();
-  for (const run of runRows) {
-    const operationRuns = operations.get(run.kind) ?? [];
-    operationRuns.push(run);
-    operations.set(run.kind, operationRuns);
-    const modelRuns = models.get(run.model) ?? [];
-    modelRuns.push(run);
-    models.set(run.model, modelRuns);
-  }
+      const totalsBuckets = bucketsForRuns(runRows, usageByRunId);
+      const commitmentUsdMicros = bucketTotal(totalsBuckets);
+      const totals: ProjectCostTotalsDto = {
+        ...totalsBuckets,
+        commitmentUsdMicros,
+        budgetLimitUsdMicros: project.budgetLimitUsdMicros,
+        remainingUsdMicros: Math.max(0, project.budgetLimitUsdMicros - commitmentUsdMicros),
+        overrunUsdMicros: Math.max(0, commitmentUsdMicros - project.budgetLimitUsdMicros),
+      };
 
-  const byOperation = OPERATION_ORDER.filter((operation) => operations.has(operation)).map(
-    (operation) => ({
-      operation,
-      ...bucketsForRuns(operations.get(operation) ?? [], usageByRunId),
-    }),
+      const operations = new Map<RunRow["kind"], CostRunRow[]>();
+      const models = new Map<string, CostRunRow[]>();
+      for (const run of runRows) {
+        const operationRuns = operations.get(run.kind) ?? [];
+        operationRuns.push(run);
+        operations.set(run.kind, operationRuns);
+        const modelRuns = models.get(run.model) ?? [];
+        modelRuns.push(run);
+        models.set(run.model, modelRuns);
+      }
+
+      const byOperation = OPERATION_ORDER.filter((operation) => operations.has(operation)).map(
+        (operation) => ({
+          operation,
+          ...bucketsForRuns(operations.get(operation) ?? [], usageByRunId),
+        }),
+      );
+
+      const byModel = [...models.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([model, modelRuns]) => ({
+          model,
+          ...bucketsForRuns(modelRuns, usageByRunId),
+        }));
+
+      return {
+        totals,
+        byOperation,
+        byModel,
+        events: usageRows.map(toCostEvent),
+      };
+    },
+    { behavior: "deferred" },
   );
-
-  const byModel = [...models.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([model, modelRuns]) => ({
-      model,
-      ...bucketsForRuns(modelRuns, usageByRunId),
-    }));
-
-  return {
-    totals,
-    byOperation,
-    byModel,
-    events: usageRows.map(toCostEvent),
-  };
 }

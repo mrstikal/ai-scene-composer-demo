@@ -115,6 +115,7 @@ export const segmentSnapshotSchema = z
     pricingVersion: z.string().min(1),
     capabilityVersion: z.string().min(1),
     reservationUsdMicros: z.number().int().nonnegative(),
+    calculatedCostUsdMicros: z.number().int().nonnegative().optional(),
     capture: z
       .object({
         relativePath: z.string().min(1),

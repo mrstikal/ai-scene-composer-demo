@@ -49,12 +49,22 @@ describe("integer budget reservations", () => {
     expect(getProjectCommitmentMicros(testEnv.handle.db, project.id)).toBe(0);
   });
 
-  it("allows zero-cost mock and fixture reservations", () => {
+  it("allows zero-cost mock and fixture reservations even after an overrun", () => {
     const project = createProject(testEnv.handle.db, testEnv.env, "Zero");
+    testEnv.handle.db
+      .update(projects)
+      .set({ budgetLimitUsdMicros: 1000 })
+      .where(eq(projects.id, project.id))
+      .run();
+    insertRun(testEnv.handle.db, project.id, { budgetChargeUsdMicros: 1500 });
+
     expect(assertReservationAllowed(testEnv.handle.db, project.id, 0)).toEqual({
-      commitmentUsdMicros: 0,
-      budgetLimitUsdMicros: 5_000_000,
+      commitmentUsdMicros: 1500,
+      budgetLimitUsdMicros: 1000,
     });
+    expect(() => assertReservationAllowed(testEnv.handle.db, project.id, 1)).toThrow(
+      "The project budget would be exceeded.",
+    );
   });
 
   it("rejects negative or unsafe reservations", () => {

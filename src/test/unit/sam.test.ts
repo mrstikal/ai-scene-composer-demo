@@ -98,6 +98,18 @@ describe("SAM stream parsing and mask placement", () => {
     expect(result.latencyMs).not.toBeNull();
   });
 
+  it("measures latency from the start of the provider invocation", async () => {
+    const startedAt = Date.now() - 5_000;
+    const result = await parseSamEvents(eventStream(documentedEvents()), {
+      ...documentedInput,
+      startedAt,
+    });
+    if (result.kind !== "mask" || result.representation !== "sam-records") {
+      throw new Error(`Expected a SAM mask, got ${result.kind}.`);
+    }
+    expect(result.latencyMs).toBeGreaterThanOrEqual(5_000);
+  });
+
   it("treats an EOF without a completion event as ambiguous", async () => {
     const result = await parseSamEvents(
       eventStream(documentedEvents(false)),

@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 
 import { readAssetBytes, sha256Hex, writeAssetBytes } from "../../assets/store";
-import { getSegmentationCalculatedCostUsdMicros } from "../../config/pricing";
 import {
   MASK_FEATHER_PX,
   MASK_PADDING_OPTIONS,
@@ -16,6 +15,7 @@ import {
 import type { AppDatabase } from "../../db/client";
 import { assets, projects, runs, selections, type RunRow } from "../../db/schema";
 import { immediateTransaction } from "../../db/transaction";
+import { getSegmentationCalculatedCostUsdMicros } from "../../config/pricing";
 import { AppError } from "../../errors";
 import { isUniqueConstraintError } from "../../idempotency/service";
 import {
@@ -31,7 +31,8 @@ import { getProjectCommitmentMicros } from "../../budget/service";
 import { markRunFailed } from "../queue";
 import { parseProviderReceipt } from "../receipt";
 import type { RunHandler, RunHandlerContext } from "../worker";
-import { createPendingUsageEvent, markUsageUnknown, settleUsageEvent } from "../../usage/service";
+import { createPendingUsageEvent, markUsageUnknown } from "../../usage/service";
+import { markRunNeedsReview, settleRunAttempt } from "../settlement";
 import { createSegmentationAdapter } from "../../providers/factory";
 import type {
   SegmentationAdapter,
@@ -90,39 +91,6 @@ function markSegmentFailed(
   markRunFailed(context.db, current, { code, message, preProvider: false });
 }
 
-function markNeedsReview(
-  db: AppDatabase,
-  run: RunRow,
-  message: string,
-  code: "INTERRUPTED" | "PROVIDER_TIMEOUT" = "INTERRUPTED",
-): void {
-  db.update(runs)
-    .set({
-      status: "needs_review",
-      stage: "error",
-      finishedAt: Date.now(),
-      errorCode: code,
-      errorMessage: message,
-    })
-    .where(eq(runs.id, run.id))
-    .run();
-}
-
-function updateRunAfterSettlement(
-  context: RunHandlerContext,
-  runId: string,
-  amountUsdMicros: number | null,
-): void {
-  context.db
-    .update(runs)
-    .set({
-      providerFinishedAt: Date.now(),
-      ...(amountUsdMicros === null ? {} : { budgetChargeUsdMicros: amountUsdMicros }),
-    })
-    .where(eq(runs.id, runId))
-    .run();
-}
-
 function settleResult(
   context: RunHandlerContext,
   run: RunRow,
@@ -140,31 +108,29 @@ function settleResult(
   if (result.kind === "rejected") {
     const amount = live ? observed : 0;
     const provenance = live ? (observed === null ? "unavailable" : "provider") : "calculated";
-    settleUsageEvent(context.db, {
-      runId: run.id,
+    settleRunAttempt(context, run.id, {
       outcome: "rejected",
       amountUsdMicros: amount,
       costProvenance: provenance,
+      chargeUsdMicros: amount,
       usageJson: result.usage,
       providerRequestId: result.providerRequestId,
       elapsedMs: result.latencyMs,
     });
-    updateRunAfterSettlement(context, run.id, amount);
     return amount;
   }
 
   const amount = live ? observed ?? calculatedCostUsdMicros : 0;
   const provenance = live ? (observed === null ? "calculated" : "provider") : "calculated";
-  settleUsageEvent(context.db, {
-    runId: run.id,
+  settleRunAttempt(context, run.id, {
     outcome: "completed",
     amountUsdMicros: amount,
     costProvenance: provenance,
+    chargeUsdMicros: amount,
     usageJson: result.usage,
     providerRequestId: result.providerRequestId,
     elapsedMs: result.latencyMs,
   });
-  updateRunAfterSettlement(context, run.id, amount);
   return amount;
 }
 
@@ -512,8 +478,14 @@ async function resumeFromReceipt(
     return;
   }
 
-  const bytes = await readAssetBytes(context.env.assetDir, maskAsset.relativePath);
-  const decoded = await decodeMaskPng(bytes);
+  let decoded: Awaited<ReturnType<typeof decodeMaskPng>>;
+  try {
+    const bytes = await readAssetBytes(context.env.assetDir, maskAsset.relativePath);
+    decoded = await decodeMaskPng(bytes);
+  } catch {
+    markSegmentFailed(context, run, "INVALID_PROVIDER_OUTPUT", "The saved SAM mask is unusable.");
+    return;
+  }
   if (decoded.width !== snapshot.width || decoded.height !== snapshot.height) {
     markSegmentFailed(context, run, "INVALID_PROVIDER_OUTPUT", "The saved SAM mask has wrong dimensions.");
     return;
@@ -591,7 +563,7 @@ export function createSegmentHandler(options: SegmentHandlerOptions = {}): RunHa
 
     if (run.providerStartedAt !== null) {
       markUsageUnknown(context.db, run.id);
-      markNeedsReview(context.db, run, "The segmentation was dispatched but has no usable receipt.");
+      markRunNeedsReview(context.db, run.id, { message: "The segmentation was dispatched but has no usable receipt." });
       return;
     }
 
@@ -635,17 +607,16 @@ export function createSegmentHandler(options: SegmentHandlerOptions = {}): RunHa
       return;
     }
 
-    let calculatedCostUsdMicros: number;
-    try {
+    let calculatedCostUsdMicros = snapshot.calculatedCostUsdMicros;
+    if (calculatedCostUsdMicros === undefined) {
       calculatedCostUsdMicros =
         run.executionMode === "live" ? getSegmentationCalculatedCostUsdMicros() : 0;
-    } catch {
-      markRunFailed(context.db, run, {
-        code: "CONFIG_INVALID",
-        message: "Meta SAM pricing is not configured.",
-        preProvider: true,
-      });
-      return;
+      const frozenSnapshot = { ...snapshot, calculatedCostUsdMicros };
+      context.db
+        .update(runs)
+        .set({ inputSnapshotJson: frozenSnapshot })
+        .where(eq(runs.id, run.id))
+        .run();
     }
 
     const dispatched = immediateTransaction(context.sqlite, () => {
@@ -726,6 +697,8 @@ export function createSegmentHandler(options: SegmentHandlerOptions = {}): RunHa
           kind: run.executionMode,
           pricingVersion: snapshot.pricingVersion,
           capabilityVersion: snapshot.capabilityVersion,
+          reservationUsdMicros: snapshot.reservationUsdMicros,
+          calculatedCostUsdMicros,
         },
       });
       return true;
@@ -745,19 +718,17 @@ export function createSegmentHandler(options: SegmentHandlerOptions = {}): RunHa
       });
     } catch {
       markUsageUnknown(context.db, run.id);
-      markNeedsReview(context.db, run, "The SAM provider outcome is unknown.");
+      markRunNeedsReview(context.db, run.id, { message: "The SAM provider outcome is unknown." });
       return;
     }
 
     settleResult(context, run, result, calculatedCostUsdMicros);
 
     if (result.kind === "ambiguous") {
-      markNeedsReview(
-        context.db,
-        run,
-        result.message,
-        result.errorCode === "PROVIDER_TIMEOUT" ? "PROVIDER_TIMEOUT" : "INTERRUPTED",
-      );
+      markRunNeedsReview(context.db, run.id, {
+        message: result.message,
+        code: result.errorCode === "PROVIDER_TIMEOUT" ? "PROVIDER_TIMEOUT" : "INTERRUPTED",
+      });
       return;
     }
 

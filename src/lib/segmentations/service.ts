@@ -4,7 +4,12 @@ import { and, eq } from "drizzle-orm";
 
 import { sha256Hex } from "../assets/store";
 import type { AppEnv } from "../config/env";
-import { assertCompatibleConfig, getPricingConfig, getProviderCapabilities } from "../config/pricing";
+import {
+  assertCompatibleConfig,
+  getPricingConfig,
+  getProviderCapabilities,
+  getSegmentationCalculatedCostUsdMicros,
+} from "../config/pricing";
 import type { CostConsent, SegmentationResponse } from "../contracts/api";
 import {
   SAM_MODEL,
@@ -40,6 +45,12 @@ export function segmentationExecutionMode(env: AppEnv): SegmentationExecutionMod
 export function segmentationReservationUsdMicros(env: AppEnv): number {
   return segmentationExecutionMode(env) === "live"
     ? getPricingConfig().reservations.segmentation.usdMicros
+    : 0;
+}
+
+export function segmentationCalculatedCostUsdMicros(env: AppEnv): number {
+  return segmentationExecutionMode(env) === "live"
+    ? getSegmentationCalculatedCostUsdMicros()
     : 0;
 }
 
@@ -140,6 +151,7 @@ function buildSegmentSnapshot(input: {
     pricingVersion: pricing.version,
     capabilityVersion: capabilities.version,
     reservationUsdMicros: input.reservationUsdMicros,
+    calculatedCostUsdMicros: segmentationCalculatedCostUsdMicros(input.env),
     capture: input.capture,
   });
 }
@@ -170,30 +182,23 @@ export async function enqueueSegmentation(input: {
   const { handle, env, projectId, sourceVersionId, positivePoints, negativePoints, costConsent, idempotencyKey } =
     input;
   const { db, sqlite } = handle;
-  assertCompatibleConfig();
-  const pricing = getPricingConfig();
-  const capabilities = getProviderCapabilities();
-  const executionMode = segmentationExecutionMode(env);
-  const reservationUsdMicros = segmentationReservationUsdMicros(env);
-
+  const points = validateSegmentationPoints({ positivePoints, negativePoints });
   const operation = "segment";
   const requestHash = hashRequest({
     operation,
     projectId,
     sourceVersionId,
-    positivePoints,
-    negativePoints,
-    costConsent,
-    executionMode,
-    pricingVersion: pricing.version,
-    capabilityVersion: capabilities.version,
-    reservationUsdMicros,
+    positivePoints: [points.positive],
+    negativePoints: points.negative === null ? [] : [points.negative],
   });
   const replay = replayIdempotent(findIdempotency(db, projectId, idempotencyKey), operation, requestHash);
   if (replay !== null) return replay;
 
+  assertCompatibleConfig();
+  const pricing = getPricingConfig();
+  const executionMode = segmentationExecutionMode(env);
+  const reservationUsdMicros = segmentationReservationUsdMicros(env);
   validateConsent(costConsent, pricing.version, reservationUsdMicros);
-  const points = validateSegmentationPoints({ positivePoints, negativePoints });
   getProjectOrThrow(db, projectId);
   const source = getSourceVersion({ db, projectId, sourceVersionId });
 

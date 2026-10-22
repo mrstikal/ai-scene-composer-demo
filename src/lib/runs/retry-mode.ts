@@ -9,14 +9,62 @@ import {
 import type { RunRow, UsageEventRow } from "../db/schema";
 import { parseProviderReceipt } from "../jobs/receipt";
 
-export function classifyRetryMode(run: RunRow, usage: UsageEventRow | undefined): RetryMode {
+export type ProviderReceiptKind = "image" | "segment" | null;
+
+export type RunSummarySource = Pick<
+  RunRow,
+  | "id"
+  | "projectId"
+  | "kind"
+  | "executionMode"
+  | "comparisonGroupId"
+  | "retryOfRunId"
+  | "parentVersionId"
+  | "inputSelectionId"
+  | "model"
+  | "inputSnapshotJson"
+  | "commonInputHash"
+  | "status"
+  | "stage"
+  | "reservedUsdMicros"
+  | "budgetChargeUsdMicros"
+  | "rawAssetId"
+  | "normalizedRawAssetId"
+  | "outputSelectionId"
+  | "outputVersionId"
+  | "metricsJson"
+  | "evaluationJson"
+  | "createdAt"
+  | "startedAt"
+  | "providerStartedAt"
+  | "providerFinishedAt"
+  | "finishedAt"
+  | "errorCode"
+  | "errorMessage"
+> & {
+  providerReceiptKind?: ProviderReceiptKind;
+  providerReceiptJson?: unknown;
+};
+
+export type UsageSummarySource = Pick<
+  UsageEventRow,
+  "runId" | "outcome" | "amountUsdMicros" | "costProvenance" | "elapsedMs" | "settledAt"
+>;
+
+function receiptKind(run: RunSummarySource): ProviderReceiptKind {
+  if (run.providerReceiptKind !== undefined) return run.providerReceiptKind;
+  return parseProviderReceipt(run.providerReceiptJson)?.kind ?? null;
+}
+
+export function classifyRetryMode(
+  run: RunSummarySource,
+  usage: UsageSummarySource | undefined,
+): RetryMode {
   if (run.kind === "edit") {
     if (run.status !== "failed" && run.status !== "needs_review") return "none";
 
-    const editReceipt = parseProviderReceipt(run.providerReceiptJson);
     if (
-      editReceipt !== null &&
-      editReceipt.kind === "image" &&
+      receiptKind(run) === "image" &&
       (run.errorCode === "LOCAL_PROCESSING_FAILED" || run.errorCode === "PROTECTED_PIXELS_CHANGED")
     ) {
       return "local";
@@ -32,8 +80,7 @@ export function classifyRetryMode(run: RunRow, usage: UsageEventRow | undefined)
   if (run.kind === "segment") {
     if (run.status !== "failed" && run.status !== "needs_review") return "none";
 
-    const segmentReceipt = parseProviderReceipt(run.providerReceiptJson);
-    if (segmentReceipt !== null && run.errorCode === "LOCAL_PROCESSING_FAILED") {
+    if (receiptKind(run) === "segment" && run.errorCode === "LOCAL_PROCESSING_FAILED") {
       return "local";
     }
     if (run.executionMode === "fixture") return "none";
@@ -48,9 +95,8 @@ export function classifyRetryMode(run: RunRow, usage: UsageEventRow | undefined)
   if (run.status !== "failed" && run.status !== "needs_review") return "none";
   if (run.errorCode === "ROOT_ALREADY_EXISTS") return "none";
 
-  const receipt = parseProviderReceipt(run.providerReceiptJson);
   if (
-    receipt !== null &&
+    receiptKind(run) === "image" &&
     (run.errorCode === "LOCAL_PROCESSING_FAILED" || run.errorCode === "PROTECTED_PIXELS_CHANGED")
   ) {
     return "local";
@@ -65,17 +111,29 @@ export function classifyRetryMode(run: RunRow, usage: UsageEventRow | undefined)
 }
 
 export function retryReservationUsdMicros(
-  run: RunRow,
+  run: RunSummarySource,
   mode: RetryMode,
   imageReservationUsdMicros = getPricingConfig().reservations.image.usdMicros,
   segmentationReservationUsdMicros = getPricingConfig().reservations.segmentation.usdMicros,
+  currentExecutionMode: RunRow["executionMode"] | undefined = undefined,
 ): number {
   if (mode === "local" || mode === "none") return 0;
-  if (run.executionMode === "mock") return 0;
+  const executionMode = currentExecutionMode ?? run.executionMode;
+  if (executionMode === "mock" || executionMode === "fixture") return 0;
   return run.kind === "segment" ? segmentationReservationUsdMicros : imageReservationUsdMicros;
 }
 
-export function inputSummaryFor(run: RunRow): RunSummaryDto["inputSummary"] {
+export function hasPossibleDuplicateCharge(
+  run: RunSummarySource,
+  usage: UsageSummarySource | undefined,
+): boolean {
+  if (run.providerStartedAt !== null) {
+    return usage === undefined || usage.outcome === "unknown" || usage.amountUsdMicros === null;
+  }
+  return usage !== undefined && (usage.outcome === "unknown" || usage.outcome === "pending");
+}
+
+export function inputSummaryFor(run: RunSummarySource): RunSummaryDto["inputSummary"] {
   if (run.kind !== "generate") return null;
   const snapshot = run.inputSnapshotJson;
   if (snapshot === null || typeof snapshot !== "object") return null;
@@ -88,7 +146,7 @@ export function inputSummaryFor(run: RunRow): RunSummaryDto["inputSummary"] {
   };
 }
 
-export function segmentInputFor(run: RunRow): RunSummaryDto["segmentInput"] {
+export function segmentInputFor(run: RunSummarySource): RunSummaryDto["segmentInput"] {
   if (run.kind !== "segment") return null;
   const parsed = segmentSnapshotSchema.safeParse(run.inputSnapshotJson);
   if (!parsed.success) return null;
@@ -99,7 +157,7 @@ export function segmentInputFor(run: RunRow): RunSummaryDto["segmentInput"] {
   };
 }
 
-export function editInputFor(run: RunRow): RunSummaryDto["editInput"] {
+export function editInputFor(run: RunSummarySource): RunSummaryDto["editInput"] {
   if (run.kind !== "edit") return null;
   const parsed = editSnapshotSchema.safeParse(run.inputSnapshotJson);
   if (!parsed.success) return null;
@@ -114,13 +172,13 @@ export function editInputFor(run: RunRow): RunSummaryDto["editInput"] {
   };
 }
 
-export function editMetricsFor(run: RunRow): RunSummaryDto["metrics"] {
+export function editMetricsFor(run: RunSummarySource): RunSummaryDto["metrics"] {
   if (run.kind !== "edit" || run.metricsJson === null) return null;
   const parsed = editMetricsSchema.safeParse(run.metricsJson);
   return parsed.success ? parsed.data : null;
 }
 
-export function evaluationFor(run: RunRow): RunSummaryDto["evaluation"] {
+export function evaluationFor(run: RunSummarySource): RunSummaryDto["evaluation"] {
   if (run.evaluationJson === null) return null;
   const parsed = evaluationSchema.safeParse(run.evaluationJson);
   return parsed.success ? parsed.data : null;

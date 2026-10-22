@@ -130,32 +130,34 @@ export async function enqueueGeneration(input: {
 }): Promise<StoredIdempotentResponse> {
   const { handle, env, projectId, generationInput, costConsent, idempotencyKey } = input;
   const { db, sqlite } = handle;
+  const resolved = resolveGenerationPrompt(generationInput);
+  const operation = "generate";
+  const requestHash = hashRequest({
+    operation,
+    projectId,
+    mode: resolved.mode,
+    presetId: resolved.presetId,
+    presetVersion: resolved.presetVersion,
+    prompt: resolved.prompt,
+  });
+
+  const replay = replayIdempotent(findIdempotency(db, projectId, idempotencyKey), operation, requestHash);
+  if (replay !== null) return replay;
+
   assertCompatibleConfig();
   const pricing = getPricingConfig();
   const reservationUsdMicros = env.aiMode === "mock" ? 0 : env.imageReservationUsdMicros;
-
   validateConsent(costConsent, pricing.version, reservationUsdMicros);
 
   if (env.aiMode === "live" && env.openRouterApiKey === null) {
     throw new AppError(503, "PROVIDER_UNAVAILABLE", "OpenRouter is not configured.");
   }
 
-  const resolved = resolveGenerationPrompt(generationInput);
   const snapshot = buildGenerationSnapshot({
     env,
     resolved,
     reservationUsdMicros,
   });
-  const operation = "generate";
-  const requestHash = hashRequest({
-    operation,
-    projectId,
-    snapshot,
-    costConsent,
-  });
-
-  const replay = replayIdempotent(findIdempotency(db, projectId, idempotencyKey), operation, requestHash);
-  if (replay !== null) return replay;
 
   const runId = randomUUID();
   const response: StoredIdempotentResponse = {

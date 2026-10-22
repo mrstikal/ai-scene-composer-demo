@@ -765,15 +765,23 @@ describe("generation failure, conflict and retry", () => {
       costProvenance: "calculated",
     });
 
-    const retry = await enqueueRetry({
+    const retryKey = randomUUID();
+    const retryInput = {
       handle: testEnv.handle,
       env: testEnv.env,
       runId,
       costConsent: consent(0),
       acknowledgePossibleDuplicateCharge: false,
-      idempotencyKey: randomUUID(),
-    });
+      idempotencyKey: retryKey,
+    };
+    const retry = await enqueueRetry(retryInput);
     expect((retry.body as { runId: string }).runId).toBe(runId);
+
+    const replay = await enqueueRetry(retryInput);
+    expect(replay).toEqual(retry);
+    expect(
+      testEnv.handle.db.select().from(runs).where(eq(runs.id, runId)).get()?.status,
+    ).toBe("queued");
 
     const result = await runGeneration(() => ({
       generate: async () => {

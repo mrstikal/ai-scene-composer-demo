@@ -82,7 +82,7 @@ export async function runWorkerLoop(input: {
   }
 
   try {
-    recoverRunningRuns(input.db);
+    recoverRunningRuns(input.db, input.env.assetDir);
     process.stdout.write("SCENE_WORKER_READY\n");
 
     while (!input.signal.aborted) {

@@ -186,6 +186,7 @@ export interface VersionDto {
   imageAssetId: string;
   origin: "upload" | "sample" | "generate" | "edit";
   originalAssetId: string | null;
+  originatingRunId: string | null;
   sourceMetadata: VersionSourceMetadata | null;
   createdAt: number;
 }
@@ -253,6 +254,7 @@ export interface RunSummaryDto {
   evaluation: Evaluation | null;
   retryMode: RetryMode;
   retryReservationUsdMicros: number;
+  possibleDuplicateCharge: boolean;
   providerLatencyMs: number | null;
   errorCode: string | null;
   errorMessage: string | null;

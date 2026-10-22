@@ -68,7 +68,7 @@ describe("HTTP route contracts", () => {
     const created = (await createResponse.json()) as { projectId: string };
     expect(created.projectId).toMatch(/^[0-9a-f-]{36}$/);
 
-    const listResponse = await listProjectsRoute();
+    const listResponse = await listProjectsRoute(new Request("http://localhost/api/projects"));
     expect(listResponse.status).toBe(200);
     const list = (await listResponse.json()) as { projects: Array<{ id: string; title: string }> };
     expect(list.projects).toEqual([
@@ -155,7 +155,7 @@ describe("HTTP route contracts", () => {
     expect(uploaded.rootVersionId).not.toBeNull();
     expect(uploaded.width).toBe(1024);
 
-    const healthResponse = await healthRoute();
+    const healthResponse = await healthRoute(new Request("http://localhost/api/health"));
     expect(healthResponse.status).toBe(200);
     const health = (await healthResponse.json()) as HealthResponse;
     expect(health.status).toBe("ready");

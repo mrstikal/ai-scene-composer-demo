@@ -1,5 +1,6 @@
-import { existsSync, lstatSync, rmSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { existsSync, lstatSync, realpathSync, rmSync } from "node:fs";
+import { relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import nextEnv from "@next/env";
 
@@ -7,7 +8,7 @@ import { getEnv } from "../src/lib/config/env";
 import { createDatabase } from "../src/lib/db/client";
 import { migrateDatabase } from "../src/lib/db/migrate";
 
-function assertSafeTarget(repoRoot: string, target: string, label: string): void {
+export function assertSafeTarget(repoRoot: string, target: string, label: string): void {
   const absolute = resolve(target);
   if (absolute === resolve(repoRoot) || absolute === resolve("/")) {
     throw new Error(`Refusing to delete ${label} at an unsafe root path.`);
@@ -18,12 +19,23 @@ function assertSafeTarget(repoRoot: string, target: string, label: string): void
     throw new Error(`Refusing to delete ${label} outside the repository.`);
   }
 
-  if (existsSync(absolute) && lstatSync(absolute).isSymbolicLink()) {
-    throw new Error(`Refusing to delete symlinked ${label}.`);
+  const realRoot = realpathSync(repoRoot);
+  let current = resolve(repoRoot);
+  for (const component of rel.split(sep)) {
+    current = resolve(current, component);
+    if (!existsSync(current)) continue;
+    if (lstatSync(current).isSymbolicLink()) {
+      throw new Error(`Refusing to delete ${label} through a symlinked path component.`);
+    }
+    const realComponent = realpathSync(current);
+    const realRel = relative(realRoot, realComponent);
+    if (realRel.startsWith("..") || realRel === "") {
+      throw new Error(`Refusing to delete ${label} outside the repository.`);
+    }
   }
 }
 
-function assertInside(repoRoot: string, target: string, prefix: string, label: string): void {
+export function assertInside(repoRoot: string, target: string, prefix: string, label: string): void {
   const rel = relative(repoRoot, resolve(target));
   if (!(rel === prefix || rel.startsWith(`${prefix}/`))) {
     throw new Error(`Refusing to delete ${label} outside the dedicated ${prefix} directory.`);
@@ -63,10 +75,13 @@ function main(): void {
   process.stdout.write("Local database and assets reset. Migrations applied.\n");
 }
 
-try {
-  main();
-} catch (error) {
-  const message = error instanceof Error ? error.message : "Local data reset failed.";
-  process.stderr.write(`${message}\n`);
-  process.exitCode = 1;
+const invokedPath = process.argv[1];
+if (invokedPath !== undefined && resolve(invokedPath) === fileURLToPath(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Local data reset failed.";
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  }
 }

@@ -7,11 +7,11 @@ import { createProject, listProjects } from "@/lib/projects/service";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   return route(async () => {
     const handle = getDatabase();
     return jsonResponse(listProjects(handle.db));
-  });
+  }, request);
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -21,5 +21,5 @@ export async function POST(request: Request): Promise<Response> {
     const handle = getDatabase();
     const project = createProject(handle.db, env, input.title);
     return jsonResponse({ projectId: project.id }, 201);
-  });
+  }, request);
 }

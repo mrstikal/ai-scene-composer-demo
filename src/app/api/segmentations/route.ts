@@ -24,5 +24,5 @@ export async function POST(request: Request): Promise<Response> {
       idempotencyKey,
     });
     return jsonResponse(stored.body, stored.status);
-  });
+  }, request);
 }

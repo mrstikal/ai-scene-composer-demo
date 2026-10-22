@@ -12,11 +12,13 @@ export function MaskOverlay(input: {
   if (!input.visible) return null;
 
   const url = `url("/api/assets/${input.maskAssetId}")`;
-  const style: CSSProperties = {
+  const style: CSSProperties & { WebkitMaskSourceType?: "luminance" } = {
     backgroundColor: input.color,
     opacity: input.opacity,
     maskImage: url,
     WebkitMaskImage: url,
+    maskMode: "luminance",
+    WebkitMaskSourceType: "luminance",
     maskSize: "contain",
     WebkitMaskSize: "contain",
     maskRepeat: "no-repeat",

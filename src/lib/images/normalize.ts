@@ -171,6 +171,17 @@ export async function inspectProviderImage(bytes: Buffer): Promise<InspectedImag
   if (inspected.width < 512 || inspected.width > 4096) {
     throw new AppError(422, "INVALID_IMAGE", "Provider image side must be between 512 and 4096 pixels.");
   }
+
+  try {
+    await sharp(bytes, {
+      failOn: "error",
+      limitInputPixels: MAX_INPUT_PIXELS,
+    })
+      .raw()
+      .toBuffer();
+  } catch {
+    throw new AppError(422, "INVALID_IMAGE", "Provider image pixels could not be decoded.");
+  }
   return inspected;
 }
 

@@ -1,17 +1,18 @@
 import { readAssetBytes } from "@/lib/assets/store";
 import { getEnv } from "@/lib/config/env";
 import { getDatabase } from "@/lib/db/client";
-import { errorResponse } from "@/lib/http";
+import { assertSameOrigin, errorResponse } from "@/lib/http";
 import { getAssetOrThrow } from "@/lib/projects/service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   try {
+    assertSameOrigin(request);
     const { id } = await context.params;
     const env = getEnv();
     const handle = getDatabase();
