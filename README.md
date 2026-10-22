@@ -2,7 +2,7 @@
 
 Local single-user Next.js application for scene upload/sample, version history and, in later phases, object-aware editing. The delivery contract is [AI_SCENE_COMPOSER_POC_PLAN.md](./AI_SCENE_COMPOSER_POC_PLAN.md).
 
-Current implementation: **Phase 4 single-model editing and branches**. Upload, bundled sample, project/version read-back, health, worker foundation, deterministic mock adapters, preset/custom generation, source-bound SAM selection, and single-model editing with exact RGB compositing and immutable child Versions are implemented. Comparison, evaluation and the costs endpoint are added in later phases.
+Current implementation: **Phase 5 comparison, metering and evaluation**. Upload, bundled sample, project/version read-back, health, worker foundation, deterministic mock adapters, preset/custom generation, source-bound SAM selection, single-model and side-by-side editing, frozen-input comparison, project costs, manual evaluation and the five-case evaluation fixture are implemented. A paid live comparison using both models is still required for full live completion.
 
 ## Requirements
 
@@ -78,7 +78,7 @@ npm test                 # Vitest unit and integration tests
 npm run typecheck        # strict TypeScript
 npm run lint             # ESLint
 npm run build            # production build
-npm run test:e2e         # Playwright mock generation, SAM selection and editing
+npm run test:e2e         # Playwright mock generation, SAM selection, editing and comparison
 npm run test:live        # guarded opt-in live smoke (later phases)
 RESET_LOCAL_DATA=1 npm run data:reset
 ```
@@ -118,6 +118,45 @@ The worker calls the selected adapter at most once, persists raw/canonical asset
 - Diagnostics persist protected pixel count, raw/final background MAE and mismatch count. An edit with no protected pixels succeeds but is flagged as not demonstrating pixel preservation.
 
 A successful edit creates an immutable child Version with the final asset, raw asset reference and edit metadata. It does **not** switch the project's active Version. The UI shows raw/final output, the exact-parent before/after slider and a Continue action; only Continue or an explicit history click changes the active pointer. Reference uploads are stored as project assets, and the project read model exposes safe reference summaries for reuse after reload.
+
+The model selector exposes exactly **Flare** and **Sunburst**. A single edit sends only the selected model; the provider contract, prompt, mask handling and compositing path are identical for both.
+
+## Comparison
+
+`POST /api/comparisons` accepts the edit body without a model. In one immediate transaction the server validates the shared inputs once, freezes identical model-independent snapshots for Flare and Sunburst, checks the combined two-image reservation atomically and inserts exactly two sibling Runs with one `comparisonGroupId`. Both initial Runs have the same parent Version, Selection, references, prompt, transport options and `commonInputHash`; neither run can chain from the other candidate. If the combined reservation exceeds the remaining project budget, neither Run nor an idempotency record is created.
+
+The response is `202 {comparisonGroupId, runIds:[flareRunId, sunburstRunId]}`. Candidate order is preserved in the response and UI even when the worker claims them in a different order. `GET /api/comparisons/:id` returns grouped candidate Runs and attempts, the successful Selection's originating SAM cost exactly once, and per-model/combined candidate cost. A failed candidate does not hide the successful sibling; retry reruns only the failed candidate, keeps the group ID and common input hash, and leaves the sibling untouched. Initial creation inserts exactly two jobs; explicit retries may add attempts, all visible in the attempt history.
+
+The UI shows candidates side by side with final images by default, raw/final toggles, exact-parent before/after, status, model, native/normalized dimensions, provider latency, cost provenance/holds, errors, single-candidate retry and Continue. Continue selects only that candidate's final Version. The comparison and its evaluation are rehydrated after reload.
+
+## Costs and budget
+
+`GET /api/projects/:id/costs` partitions every Run exactly once:
+
+- settled non-null amount → its `provider`, `calculated` or `estimated` provenance bucket
+- settled `unavailable` amount → `unknownHoldUsdMicros` with the retained budget charge
+- queued/running unsettled attempt → `activeReservationUsdMicros`
+- pre-provider failure → zero
+
+`commitmentUsdMicros` equals the five bucket sum and the Run budget-charge sum; `remainingUsdMicros` and `overrunUsdMicros` are clamped non-negative differences against the project cap. Per-operation and per-model groups use the same partition without duplicating project limits. The event list exposes only safe request/model IDs and accounting fields, never provider JSON. The UI refreshes costs when polling reveals changed status or accounting, including settlement during local processing.
+
+## Evaluation
+
+`PATCH /api/runs/:id/evaluation` stores a complete manual evaluation on a successful edit Run. Scores are integers 1-5 for boundary artifacts, prompt adherence, reference fidelity and plausibility; notes are limited to 1000 characters and are not trimmed. `referenceFidelity` may be null and must be null when the edit had no references. Evaluations are mutable metadata on the Run, not on the Version or Asset. Runs without an evaluation remain unscored.
+
+## Five-case evaluation
+
+Definitions live in `src/test/fixtures/evaluation/cases.json`. Every executed case must use the same source Version, Selection, region, references, prompt and transport parameters for both models, and record latency, cost/provenance, normalized-raw MAE, final protected MAE/mismatch count and manual 1-5 scores. There is no aggregate ranking.
+
+| Case | Status | Flare run | Sunburst run | Observations |
+|---|---|---|---|---|
+| Recolor sofa | not_run | — | — | Awaiting paid live comparison |
+| Replace lamp from a reference | not_run | — | — | Awaiting paid live comparison |
+| Remove wall picture | not_run | — | — | Awaiting paid live comparison |
+| Change object material | not_run | — | — | Awaiting paid live comparison |
+| Change chair | not_run | — | — | Awaiting paid live comparison |
+
+The offline mock gate is fully exercisable without credentials. Full live completion still requires one paid comparison using both models on identical frozen reference-driven input.
 
 ## Storage and safety
 

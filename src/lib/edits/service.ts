@@ -62,7 +62,7 @@ function requireEditModel(model: string): EditModel {
   return model as EditModel;
 }
 
-function normalizeEditText(input: {
+export function normalizeEditText(input: {
   targetLabel: string | undefined;
   instruction: string;
 }): { targetLabel: string; instruction: string } {
@@ -194,7 +194,7 @@ export function assertEditInputsAvailable(
   });
 }
 
-function buildSnapshot(input: {
+export function buildEditSnapshotForModel(input: {
   db: AppDatabase;
   env: AppEnv;
   projectId: string;
@@ -286,6 +286,65 @@ function buildSnapshot(input: {
   return { snapshot, commonInputHash: buildEditCommonInputHash(snapshot) };
 }
 
+export function prepareEditSnapshot(input: {
+  db: AppDatabase;
+  env: AppEnv;
+  projectId: string;
+  parentVersionId: string;
+  selectionId: string;
+  paddingPx: 16 | 32;
+  targetLabel: string;
+  instruction: string;
+  referenceAssetIds: readonly string[];
+  model: EditModel;
+  reservationUsdMicros: number;
+  pricingVersion: string;
+  capabilityVersion: string;
+}): { snapshot: EditSnapshot; commonInputHash: string; selection: SelectionRow } {
+  const parentAsset = getVersionAsset(input.db, input.projectId, input.parentVersionId);
+  const selection = input.db
+    .select()
+    .from(selections)
+    .where(and(eq(selections.id, input.selectionId), eq(selections.projectId, input.projectId)))
+    .get();
+  if (selection === undefined) {
+    throw new AppError(404, "NOT_FOUND", "Selection was not found in this project.");
+  }
+  if (selection.sourceVersionId !== input.parentVersionId) {
+    throw new AppError(409, "STALE_SELECTION", "The selection belongs to a different source version.");
+  }
+
+  const regions = regionsSchema.safeParse(selection.regionsJson);
+  if (!regions.success) {
+    throw new AppError(422, "INVALID_SELECTION", "The saved selection regions are invalid.");
+  }
+  const variant = regions.data.variants[String(input.paddingPx) as "16" | "32"];
+  if (variant === undefined || variant.paddingPx !== input.paddingPx) {
+    throw new AppError(422, "INVALID_SELECTION", "The selected padding variant is missing.");
+  }
+
+  const referenceAssets = getReferenceAssets(input.db, input.projectId, input.referenceAssetIds);
+  const built = buildEditSnapshotForModel({
+    db: input.db,
+    env: input.env,
+    projectId: input.projectId,
+    parentVersionId: input.parentVersionId,
+    parentAsset,
+    selection,
+    variant,
+    paddingPx: input.paddingPx,
+    targetLabel: input.targetLabel,
+    instruction: input.instruction,
+    referenceAssets,
+    model: input.model,
+    reservationUsdMicros: input.reservationUsdMicros,
+    pricingVersion: input.pricingVersion,
+    capabilityVersion: input.capabilityVersion,
+  });
+
+  return { ...built, selection };
+}
+
 export async function enqueueEdit(input: {
   handle: DatabaseHandle;
   env: AppEnv;
@@ -357,41 +416,16 @@ export async function enqueueEdit(input: {
       }
 
       getProjectOrThrow(db, projectId);
-      const parentAsset = getVersionAsset(db, projectId, input.parentVersionId);
-      const selection = db
-        .select()
-        .from(selections)
-        .where(and(eq(selections.id, input.selectionId), eq(selections.projectId, projectId)))
-        .get();
-      if (selection === undefined) {
-        throw new AppError(404, "NOT_FOUND", "Selection was not found in this project.");
-      }
-      if (selection.sourceVersionId !== input.parentVersionId) {
-        throw new AppError(409, "STALE_SELECTION", "The selection belongs to a different source version.");
-      }
-
-      const regions = regionsSchema.safeParse(selection.regionsJson);
-      if (!regions.success) {
-        throw new AppError(422, "INVALID_SELECTION", "The saved selection regions are invalid.");
-      }
-      const variant = regions.data.variants[String(input.paddingPx) as "16" | "32"];
-      if (variant === undefined || variant.paddingPx !== input.paddingPx) {
-        throw new AppError(422, "INVALID_SELECTION", "The selected padding variant is missing.");
-      }
-
-      const referenceAssets = getReferenceAssets(db, projectId, input.referenceAssetIds);
-      const built = buildSnapshot({
+      const built = prepareEditSnapshot({
         db,
         env,
         projectId,
         parentVersionId: input.parentVersionId,
-        parentAsset,
-        selection,
-        variant,
+        selectionId: input.selectionId,
         paddingPx: input.paddingPx,
         targetLabel: text.targetLabel,
         instruction: text.instruction,
-        referenceAssets,
+        referenceAssetIds: input.referenceAssetIds,
         model,
         reservationUsdMicros,
         pricingVersion: pricing.version,
@@ -409,7 +443,7 @@ export async function enqueueEdit(input: {
           comparisonGroupId: null,
           retryOfRunId: null,
           parentVersionId: input.parentVersionId,
-          inputSelectionId: selection.id,
+          inputSelectionId: built.selection.id,
           model,
           inputSnapshotJson: built.snapshot,
           commonInputHash: built.commonInputHash,

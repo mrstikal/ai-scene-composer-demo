@@ -18,6 +18,9 @@ function run(overrides: Partial<RunSummaryDto> = {}): RunSummaryDto {
     outputSelectionId: "selection-1",
     rawAssetId: null,
     normalizedRawAssetId: null,
+    comparisonGroupId: null,
+    retryOfRunId: null,
+    commonInputHash: null,
     inputSummary: null,
     segmentInput: {
       sourceVersionId: "version-1",
@@ -26,6 +29,7 @@ function run(overrides: Partial<RunSummaryDto> = {}): RunSummaryDto {
     },
     editInput: null,
     metrics: null,
+    evaluation: null,
     retryMode: "none",
     retryReservationUsdMicros: 0,
     providerLatencyMs: null,

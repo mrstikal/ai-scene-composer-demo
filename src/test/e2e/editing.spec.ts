@@ -132,7 +132,7 @@ async function selectObject(page: Page, request: APIRequestContext, projectId: s
 
 async function fillAndRunEdit(page: Page, instruction: string): Promise<void> {
   await page.getByLabel("Edit instruction").fill(instruction);
-  await page.getByLabel(/I confirm the estimated edit cost/).check();
+  await page.getByLabel(/I confirm the estimated cost/).check();
   const run = page.getByRole("button", { name: "Run Edit" });
   await expect(run).toBeEnabled();
   await run.click();

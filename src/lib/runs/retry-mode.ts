@@ -1,6 +1,11 @@
 import type { RetryMode, RunSummaryDto } from "../contracts/api";
 import { getPricingConfig } from "../config/pricing";
-import { editMetricsSchema, editSnapshotSchema, segmentSnapshotSchema } from "../contracts/domain";
+import {
+  editMetricsSchema,
+  editSnapshotSchema,
+  evaluationSchema,
+  segmentSnapshotSchema,
+} from "../contracts/domain";
 import type { RunRow, UsageEventRow } from "../db/schema";
 import { parseProviderReceipt } from "../jobs/receipt";
 
@@ -112,5 +117,11 @@ export function editInputFor(run: RunRow): RunSummaryDto["editInput"] {
 export function editMetricsFor(run: RunRow): RunSummaryDto["metrics"] {
   if (run.kind !== "edit" || run.metricsJson === null) return null;
   const parsed = editMetricsSchema.safeParse(run.metricsJson);
+  return parsed.success ? parsed.data : null;
+}
+
+export function evaluationFor(run: RunRow): RunSummaryDto["evaluation"] {
+  if (run.evaluationJson === null) return null;
+  const parsed = evaluationSchema.safeParse(run.evaluationJson);
   return parsed.success ? parsed.data : null;
 }

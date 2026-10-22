@@ -3,18 +3,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { SCENE_PRESETS, type ScenePresetId } from "@/config/scene-presets";
+import { ComparisonPanel } from "@/components/compare/ComparisonPanel";
+import { CostSummary } from "@/components/costs/CostSummary";
 import { EditPanel, type EditFormInput } from "@/components/editor/EditPanel";
 import { SceneCanvas } from "@/components/editor/SceneCanvas";
 import { SelectionPanel } from "@/components/editor/SelectionPanel";
-import type { MaskPaddingPx, Point } from "@/lib/contracts/domain";
+import type { Evaluation, MaskPaddingPx, Point } from "@/lib/contracts/domain";
 import { shouldApplySelection, type PendingSelectionRequest } from "@/lib/ui/selection-guard";
 import { createSubmitKeyStore } from "@/lib/ui/submit-keys";
 import type {
   AssetUploadResponse,
+  ComparisonResponse,
   EditResponse,
   GenerationInput,
   GenerationResponse,
   HealthResponse,
+  ProjectCostsDto,
   ProjectListDto,
   ProjectSnapshotDto,
   RetryResponse,
@@ -68,6 +72,8 @@ export function AppShell() {
   const [projects, setProjects] = useState<ProjectListDto["projects"]>([]);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<ProjectSnapshotDto | null>(null);
+  const [costs, setCosts] = useState<ProjectCostsDto | null>(null);
+  const [costsError, setCostsError] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [tab, setTab] = useState<"sample" | "upload" | "generate">("sample");
   const [generationMode, setGenerationMode] = useState<"preset" | "custom">("preset");
@@ -215,12 +221,48 @@ export function AppShell() {
     activeVersionId === null
       ? []
       : snapshot?.runs.filter(
-          (run) => run.kind === "edit" && run.parentVersionId === activeVersionId,
+          (run) =>
+            run.kind === "edit" &&
+            run.parentVersionId === activeVersionId &&
+            run.comparisonGroupId === null,
         ) ?? [];
   const latestEditRun = editRunsForActive.at(-1) ?? null;
   const editProviderAvailable = health?.providers.images.available ?? false;
   const editProviderReason = health?.providers.images.reason ?? null;
   const editReservationUsdMicros = mockMode ? 0 : imageReservationUsdMicros;
+  const comparisonReservationUsdMicros = mockMode
+    ? 0
+    : snapshot?.pricing.reservations.comparisonUsdMicros ?? 0;
+
+  const comparisonGroups = new Map<string, RunSummaryDto[]>();
+  for (const run of snapshot?.runs ?? []) {
+    if (run.comparisonGroupId === null) continue;
+    const groupRuns = comparisonGroups.get(run.comparisonGroupId) ?? [];
+    groupRuns.push(run);
+    comparisonGroups.set(run.comparisonGroupId, groupRuns);
+  }
+  const comparisonGroupEntries = [...comparisonGroups.entries()].map(([id, runs]) => ({
+    id,
+    runs,
+    createdAt: Math.min(...runs.map((run) => run.createdAt)),
+  }));
+  const activeComparisonGroups = comparisonGroupEntries.filter((group) =>
+    group.runs.some((run) => run.parentVersionId === activeVersionId),
+  );
+  const latestComparisonGroup =
+    (activeComparisonGroups.length > 0 ? activeComparisonGroups : comparisonGroupEntries)
+      .sort((left, right) => left.createdAt - right.createdAt)
+      .at(-1) ?? null;
+
+  const costSignature =
+    snapshot === null
+      ? ""
+      : snapshot.runs
+          .map(
+            (run) =>
+              `${run.id}:${run.status}:${run.cost.budgetChargeUsdMicros}:${run.cost.amountUsdMicros}:${run.cost.provenance}:${run.cost.outcome}`,
+          )
+          .join("|");
 
   const pendingRunForRequest =
     pendingSelection === null
@@ -348,10 +390,34 @@ export function AppShell() {
     };
   }, [projectId, hasActiveRuns, pollNow]);
 
+  useEffect(() => {
+    if (projectId === null) return;
+
+    let cancelled = false;
+    async function loadCosts(): Promise<void> {
+      try {
+        const next = await apiRequest<ProjectCostsDto>(`/api/projects/${projectId}/costs`);
+        if (cancelled) return;
+        setCosts(next);
+        setCostsError(null);
+      } catch (cause) {
+        if (cancelled) return;
+        setCostsError(cause instanceof Error ? cause.message : "Costs load failed.");
+      }
+    }
+
+    void loadCosts();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, costSignature]);
+
   async function handleCreateProject(): Promise<void> {
     setBusy(true);
     setError(null);
     setNotice(null);
+    setCosts(null);
+    setCostsError(null);
     try {
       const body = title.trim().length > 0 ? { title: title.trim() } : {};
       const result = await apiRequest<{ projectId: string }>("/api/projects", {
@@ -379,6 +445,8 @@ export function AppShell() {
     setBusy(true);
     setError(null);
     setNotice(null);
+    setCosts(null);
+    setCostsError(null);
     setSelectionUiVersionId(null);
     setSelectionMode("positive");
     setPositivePoint(null);
@@ -559,6 +627,97 @@ export function AppShell() {
       return false;
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleCompareSubmit(input: EditFormInput): Promise<boolean> {
+    if (projectId === null || snapshot === null || activeVersionId === null) return false;
+    if (activeSelection === null) {
+      setError("A successful SAM selection is required before comparing models.");
+      return false;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const operation = "comparison";
+    const key = submitKey(
+      operation,
+      JSON.stringify({
+        projectId,
+        parentVersionId: activeVersionId,
+        selectionId: activeSelection.id,
+        paddingPx,
+        targetLabel: input.targetLabel,
+        instruction: input.instruction,
+        referenceIds: input.referenceIds,
+        pricingVersion: snapshot.pricing.version,
+        reservation: comparisonReservationUsdMicros,
+      }),
+    );
+
+    try {
+      await apiRequest<ComparisonResponse>("/api/comparisons", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": key,
+        },
+        body: JSON.stringify({
+          projectId,
+          parentVersionId: activeVersionId,
+          selectionId: activeSelection.id,
+          paddingPx,
+          targetLabel: input.targetLabel,
+          instruction: input.instruction,
+          referenceAssetIds: input.referenceIds,
+          costConsent: {
+            pricingVersion: snapshot.pricing.version,
+            reservationUsdMicros: comparisonReservationUsdMicros,
+            acknowledged: true,
+          },
+        }),
+      });
+      clearSubmitKey(operation);
+      try {
+        await loadProject(projectId);
+      } catch {
+        setConnectionWarning("Comparison queued. Refresh the project to see progress.");
+        setPollNow((value) => value + 1);
+      }
+      setNotice("Comparison queued: Flare and Sunburst share the frozen input.");
+      return true;
+    } catch (cause) {
+      if (cause instanceof ApiRequestError) clearSubmitKey(operation);
+      setError(cause instanceof Error ? cause.message : "Comparison enqueue failed.");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleEvaluation(runId: string, evaluation: Evaluation): Promise<boolean> {
+    setError(null);
+    setNotice(null);
+    try {
+      await apiRequest(`/api/runs/${runId}/evaluation`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(evaluation),
+      });
+      if (projectId !== null) {
+        try {
+          await loadProject(projectId);
+        } catch {
+          setConnectionWarning("Evaluation saved. Refresh the project to see it.");
+          setPollNow((value) => value + 1);
+        }
+      }
+      setNotice("Evaluation saved.");
+      return true;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Evaluation save failed.");
+      return false;
     }
   }
 
@@ -807,7 +966,7 @@ export function AppShell() {
           <div>
             <h1 className="text-xl font-semibold tracking-tight">AI Scene Composer</h1>
             <p className="text-sm text-stone-600">
-              Upload, sample, generation, SAM selection, editing and version tree
+              Upload, sample, generation, SAM selection, editing, comparison and version tree
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1202,13 +1361,31 @@ export function AppShell() {
             busy={busy}
             mockMode={mockMode}
             imageReservationUsdMicros={editReservationUsdMicros}
+            comparisonReservationUsdMicros={comparisonReservationUsdMicros}
+            remainingBudgetUsdMicros={costs?.totals.remainingUsdMicros ?? null}
             providerAvailable={editProviderAvailable}
             providerReason={editProviderReason}
             onSubmit={handleEditSubmit}
+            onCompare={handleCompareSubmit}
             onUploadReference={handleUploadReference}
             onRetry={(run) => void handleRetry(run)}
             onContinue={(versionId) => void handleSelectVersion(versionId)}
+            onEvaluation={handleEvaluation}
           />
+
+          {latestComparisonGroup !== null ? (
+            <ComparisonPanel
+              key={latestComparisonGroup.id}
+              groupId={latestComparisonGroup.id}
+              runs={latestComparisonGroup.runs}
+              versions={snapshot?.versions ?? []}
+              busy={busy}
+              remainingBudgetUsdMicros={costs?.totals.remainingUsdMicros ?? null}
+              onRetry={(run) => void handleRetry(run)}
+              onContinue={(versionId) => void handleSelectVersion(versionId)}
+              onEvaluation={handleEvaluation}
+            />
+          ) : null}
 
           {latestGenerationRun !== null ? (
             <section className="rounded-xl border border-stone-300 bg-white p-4">
@@ -1306,25 +1483,25 @@ export function AppShell() {
           </section>
 
           <section className="rounded-xl border border-stone-300 bg-white p-4">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500">Budget</h2>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500">Pricing</h2>
             {snapshot === null ? (
               <p className="mt-2 text-sm text-stone-600">No project selected.</p>
             ) : (
               <dl className="mt-2 space-y-1 text-sm">
                 <div className="flex justify-between gap-3">
-                  <dt className="text-stone-500">Limit</dt>
-                  <dd className="font-medium">
-                    ${(snapshot.project.budgetLimitUsdMicros / 1_000_000).toFixed(2)}
-                  </dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-stone-500">Pricing</dt>
+                  <dt className="text-stone-500">Version</dt>
                   <dd className="font-medium">{snapshot.pricing.version}</dd>
                 </div>
                 <div className="flex justify-between gap-3">
                   <dt className="text-stone-500">Image reservation</dt>
                   <dd className="font-medium">
                     ${(snapshot.pricing.reservations.imageUsdMicros / 1_000_000).toFixed(2)}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-stone-500">Comparison reservation</dt>
+                  <dd className="font-medium">
+                    ${(snapshot.pricing.reservations.comparisonUsdMicros / 1_000_000).toFixed(2)}
                   </dd>
                 </div>
                 <div className="flex justify-between gap-3">
@@ -1335,10 +1512,9 @@ export function AppShell() {
                 </div>
               </dl>
             )}
-            <p className="mt-3 text-xs text-stone-500">
-              Comparison and evaluation arrive in later phases.
-            </p>
           </section>
+
+          <CostSummary costs={costs} error={costsError} />
         </aside>
       </main>
     </div>

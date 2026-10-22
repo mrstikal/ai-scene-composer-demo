@@ -11,15 +11,19 @@ import type {
 } from "@/lib/contracts/api";
 import {
   EDIT_MODELS,
+  type EditModel,
+  type Evaluation,
   type MaskPaddingPx,
 } from "@/lib/contracts/domain";
+import { EvaluationForm } from "@/components/runs/EvaluationForm";
+import { RunDetailPanel } from "@/components/runs/RunDetailPanel";
 import { ReferencePicker } from "./ReferencePicker";
 
 export interface EditFormInput {
   targetLabel: string;
   instruction: string;
   referenceIds: string[];
-  model: (typeof EDIT_MODELS)[number];
+  model: EditModel;
 }
 
 function shortId(id: string): string {
@@ -34,7 +38,9 @@ function formatUsd(micros: number | null): string {
 function ResultCard(input: {
   run: RunSummaryDto;
   versions: VersionDto[];
+  busy: boolean;
   onContinue: (versionId: string) => void;
+  onEvaluation: (runId: string, evaluation: Evaluation) => Promise<boolean>;
 }) {
   const [view, setView] = useState<"final" | "raw">("final");
   const [beforePercent, setBeforePercent] = useState(50);
@@ -181,6 +187,17 @@ function ResultCard(input: {
       >
         Continue from This Result
       </button>
+
+      {input.run.status === "succeeded" ? (
+        <EvaluationForm
+          key={input.run.id}
+          run={input.run}
+          busy={input.busy}
+          onSave={input.onEvaluation}
+        />
+      ) : null}
+
+      <RunDetailPanel runId={input.run.id} commonInputHash={input.run.commonInputHash} />
     </div>
   );
 }
@@ -197,18 +214,24 @@ export function EditPanel(input: {
   busy: boolean;
   mockMode: boolean;
   imageReservationUsdMicros: number;
+  comparisonReservationUsdMicros: number;
+  remainingBudgetUsdMicros: number | null;
   providerAvailable: boolean;
   providerReason: string | null;
   onSubmit: (input: EditFormInput) => Promise<boolean>;
+  onCompare: (input: EditFormInput) => Promise<boolean>;
   onUploadReference: (file: File) => Promise<string | null>;
   onRetry: (run: RunSummaryDto) => void;
   onContinue: (versionId: string) => void;
+  onEvaluation: (runId: string, evaluation: Evaluation) => Promise<boolean>;
 }) {
   const [targetLabel, setTargetLabel] = useState("selected object");
   const [instruction, setInstruction] = useState("");
   const [referenceIds, setReferenceIds] = useState<string[]>([]);
+  const [model, setModel] = useState<EditModel>(EDIT_MODELS[0]);
   const [costAccepted, setCostAccepted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [comparing, setComparing] = useState(false);
 
   const pending =
     input.latestRun !== null &&
@@ -227,6 +250,7 @@ export function EditPanel(input: {
     !input.busy &&
     !input.selectionPending &&
     !submitting &&
+    !comparing &&
     input.providerAvailable;
 
   function addReference(assetId: string): void {
@@ -261,11 +285,27 @@ export function EditPanel(input: {
         targetLabel: targetLabel.trim(),
         instruction: instruction.trim(),
         referenceIds,
-        model: EDIT_MODELS[0],
+        model,
       });
       if (queued) setCostAccepted(false);
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function compare(): Promise<void> {
+    if (!ready) return;
+    setComparing(true);
+    try {
+      const queued = await input.onCompare({
+        targetLabel: targetLabel.trim(),
+        instruction: instruction.trim(),
+        referenceIds,
+        model,
+      });
+      if (queued) setCostAccepted(false);
+    } finally {
+      setComparing(false);
     }
   }
 
@@ -313,7 +353,7 @@ export function EditPanel(input: {
             value={targetLabel}
             maxLength={80}
             onChange={(event) => setTargetLabel(event.target.value)}
-            disabled={input.busy || submitting}
+            disabled={input.busy || submitting || comparing}
           />
         </div>
 
@@ -327,7 +367,7 @@ export function EditPanel(input: {
             value={instruction}
             maxLength={2000}
             onChange={(event) => setInstruction(event.target.value)}
-            disabled={input.busy || submitting}
+            disabled={input.busy || submitting || comparing}
           />
           <p className="text-right text-xs text-stone-500">{instruction.length}/2000</p>
         </div>
@@ -339,17 +379,19 @@ export function EditPanel(input: {
           <select
             id="edit-model"
             className="mt-1 w-full rounded-md border border-stone-300 bg-white px-2 py-1.5 text-sm"
-            value={EDIT_MODELS[0]}
-            disabled
+            value={model}
+            onChange={(event) => setModel(event.target.value as EditModel)}
+            disabled={input.busy || submitting || comparing}
           >
-            <option value={EDIT_MODELS[0]}>Flare</option>
+            <option value="openai/gpt-image-2.5-flare">Flare</option>
+            <option value="openai/gpt-image-2.5-sunburst">Sunburst</option>
           </select>
         </div>
 
         <ReferencePicker
           references={input.references}
           selectedIds={referenceIds}
-          busy={input.busy || submitting}
+          busy={input.busy || submitting || comparing}
           onUpload={input.onUploadReference}
           onAdd={addReference}
           onRemove={removeReference}
@@ -361,25 +403,39 @@ export function EditPanel(input: {
             type="checkbox"
             checked={costAccepted}
             onChange={(event) => setCostAccepted(event.target.checked)}
-            disabled={input.busy || submitting}
+            disabled={input.busy || submitting || comparing}
             className="mt-0.5"
           />
           <span>
-            I confirm the estimated edit cost.
+            I confirm the estimated cost.
             {input.mockMode
-              ? " Mock run: no provider charge."
-              : ` Reserved estimate: $${(input.imageReservationUsdMicros / 1_000_000).toFixed(2)}.`}
+              ? " Mock runs: no provider charge."
+              : ` Edit: $${(input.imageReservationUsdMicros / 1_000_000).toFixed(2)}; Compare both: $${(input.comparisonReservationUsdMicros / 1_000_000).toFixed(2)}.${
+                  input.remainingBudgetUsdMicros === null
+                    ? ""
+                    : ` Remaining budget: $${(input.remainingBudgetUsdMicros / 1_000_000).toFixed(2)}.`
+                }`}
           </span>
         </label>
 
-        <button
-          type="button"
-          className="w-full rounded-md bg-stone-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
-          onClick={() => void submit()}
-          disabled={!ready}
-        >
-          Run Edit
-        </button>
+        <div className="grid gap-2">
+          <button
+            type="button"
+            className="w-full rounded-md bg-stone-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+            onClick={() => void submit()}
+            disabled={!ready}
+          >
+            {submitting ? "Queuing Edit..." : "Run Edit"}
+          </button>
+          <button
+            type="button"
+            className="w-full rounded-md border border-stone-400 bg-white px-3 py-2 text-sm font-medium disabled:opacity-50"
+            onClick={() => void compare()}
+            disabled={!ready}
+          >
+            {comparing ? "Queuing Comparison..." : "Compare Both"}
+          </button>
+        </div>
 
         {pending ? (
           <p className="text-xs text-stone-600">
@@ -392,12 +448,17 @@ export function EditPanel(input: {
             <p className="text-xs text-red-700">
               {input.latestRun?.errorMessage ?? "Edit failed."}
             </p>
+            {input.remainingBudgetUsdMicros !== null ? (
+              <p className="text-xs text-stone-500">
+                Remaining budget: ${(input.remainingBudgetUsdMicros / 1_000_000).toFixed(2)}
+              </p>
+            ) : null}
             {input.latestRun?.retryMode !== "none" ? (
               <button
                 type="button"
                 className="w-full rounded-md border border-stone-300 bg-stone-50 px-3 py-2 text-sm font-medium disabled:opacity-50"
                 onClick={() => input.onRetry(input.latestRun as RunSummaryDto)}
-                disabled={input.busy || submitting}
+                disabled={input.busy || submitting || comparing}
               >
                 {input.latestRun?.retryMode === "local"
                   ? "Retry Local Edit Processing"
@@ -418,7 +479,9 @@ export function EditPanel(input: {
             key={input.latestRun.id}
             run={input.latestRun}
             versions={input.versions}
+            busy={input.busy || submitting || comparing}
             onContinue={input.onContinue}
+            onEvaluation={input.onEvaluation}
           />
         ) : null}
       </div>

@@ -4,8 +4,12 @@ import { SCENE_PRESET_IDS } from "../../config/scene-presets";
 import {
   EDIT_MODELS,
   pointSchema,
+  type Bounds,
   type EditMetrics,
+  type EditTransportOptions,
+  type Evaluation,
   type Point,
+  type RegionPercentages,
   type Regions,
   type VersionSourceMetadata,
 } from "./domain";
@@ -105,6 +109,24 @@ export const editRequestSchema = z
   .strict();
 
 export type EditRequest = z.infer<typeof editRequestSchema>;
+
+export const comparisonRequestSchema = z
+  .object({
+    projectId: z.string().uuid(),
+    parentVersionId: z.string().uuid(),
+    selectionId: z.string().uuid(),
+    paddingPx: z.union([z.literal(16), z.literal(32)]),
+    targetLabel: z.string().trim().min(1).max(80).optional(),
+    instruction: z.string().trim().min(1).max(2000),
+    referenceAssetIds: z
+      .array(z.string().uuid())
+      .max(2)
+      .refine((ids) => new Set(ids).size === ids.length, "Reference asset IDs must be unique."),
+    costConsent: costConsentSchema,
+  })
+  .strict();
+
+export type ComparisonRequest = z.infer<typeof comparisonRequestSchema>;
 
 export const retryRequestSchema = z
   .object({
@@ -221,10 +243,14 @@ export interface RunSummaryDto {
   outputSelectionId: string | null;
   rawAssetId: string | null;
   normalizedRawAssetId: string | null;
+  comparisonGroupId: string | null;
+  retryOfRunId: string | null;
+  commonInputHash: string | null;
   inputSummary: RunInputSummaryDto | null;
   segmentInput: SegmentInputSummaryDto | null;
   editInput: EditInputSummaryDto | null;
   metrics: EditMetrics | null;
+  evaluation: Evaluation | null;
   retryMode: RetryMode;
   retryReservationUsdMicros: number;
   providerLatencyMs: number | null;
@@ -265,6 +291,85 @@ export interface ProjectSnapshotDto {
   references: ReferenceAssetDto[];
   runs: RunSummaryDto[];
   pricing: PublicPricingDto;
+}
+
+export interface ComparisonResponse {
+  comparisonGroupId: string;
+  runIds: [string, string];
+}
+
+export interface ComparisonSharedSelectionCostDto {
+  selectionId: string;
+  runId: string;
+  model: string;
+  amountUsdMicros: number | null;
+  provenance: "provider" | "calculated" | "estimated" | "unavailable" | null;
+  outcome: "pending" | "completed" | "rejected" | "unknown" | null;
+}
+
+export interface ComparisonModelCostDto {
+  model: string;
+  runIds: string[];
+  knownUsdMicros: number;
+  unknownAmountRuns: number;
+  pendingRuns: number;
+}
+
+export interface ComparisonCandidateCostDto {
+  knownUsdMicros: number;
+  unknownAmountRuns: number;
+  pendingRuns: number;
+  byModel: ComparisonModelCostDto[];
+}
+
+export interface ComparisonDetailDto {
+  comparisonGroupId: string;
+  runs: RunSummaryDto[];
+  sharedSelectionCost: ComparisonSharedSelectionCostDto | null;
+  candidateCost: ComparisonCandidateCostDto;
+}
+
+export interface CostBucketsDto {
+  providerUsdMicros: number;
+  calculatedUsdMicros: number;
+  estimatedUsdMicros: number;
+  activeReservationUsdMicros: number;
+  unknownHoldUsdMicros: number;
+}
+
+export interface ProjectCostTotalsDto extends CostBucketsDto {
+  commitmentUsdMicros: number;
+  budgetLimitUsdMicros: number;
+  remainingUsdMicros: number;
+  overrunUsdMicros: number;
+}
+
+export interface CostEventDto {
+  id: string;
+  runId: string;
+  operation: "generate" | "segment" | "edit";
+  provider: string;
+  model: string;
+  executionMode: "live" | "mock" | "fixture";
+  outcome: "pending" | "completed" | "rejected" | "unknown";
+  amountUsdMicros: number | null;
+  costProvenance: "provider" | "calculated" | "estimated" | "unavailable";
+  pricingVersion: string;
+  providerRequestId: string | null;
+  elapsedMs: number | null;
+  createdAt: number;
+  settledAt: number | null;
+}
+
+export interface ProjectCostsDto {
+  totals: ProjectCostTotalsDto;
+  byOperation: Array<CostBucketsDto & { operation: "generate" | "segment" | "edit" }>;
+  byModel: Array<CostBucketsDto & { model: string }>;
+  events: CostEventDto[];
+}
+
+export interface EvaluationResponse {
+  evaluation: Evaluation;
 }
 
 export interface GenerationResponse {
@@ -319,6 +424,9 @@ export type RunDetailInputDto =
       sourceSha256: string;
       selectionId: string;
       paddingPx: 16 | 32;
+      featherPx: number;
+      regionBoundingBox: Bounds;
+      regionPercentages: RegionPercentages;
       targetLabel: string;
       instruction: string;
       prompt: string;
@@ -327,6 +435,8 @@ export type RunDetailInputDto =
       referenceAssetIds: string[];
       referenceSha256: string[];
       maskPipelineVersion: string;
+      normalizationVersion: string;
+      transportOptions: EditTransportOptions;
       pricingVersion: string;
       capabilityVersion: string;
       reservationUsdMicros: number;

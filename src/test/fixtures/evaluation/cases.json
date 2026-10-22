@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "sourceSampleId": "living-room-v1",
+  "notes": [
+    "Fixed manual evaluation cases for Phase 5.",
+    "Each executed case must use the same source version, selection, region, references, prompt and transport parameters for both models.",
+    "Status values are not_run, passed or failed; this file defines the cases, not results."
+  ],
+  "cases": [
+    {
+      "id": "recolor-sofa",
+      "label": "Recolor sofa",
+      "targetLabel": "sofa",
+      "instruction": "Change the sofa upholstery to deep green velvet while preserving its shape, seams and the rest of the room.",
+      "referenceCount": 0
+    },
+    {
+      "id": "replace-lamp-from-reference",
+      "label": "Replace lamp from a reference",
+      "targetLabel": "floor lamp",
+      "instruction": "Replace the floor lamp with the lamp shown in Image 2, matching its shape, material and proportions.",
+      "referenceCount": 1
+    },
+    {
+      "id": "remove-wall-picture",
+      "label": "Remove wall picture",
+      "targetLabel": "framed picture",
+      "instruction": "Remove the framed picture from the wall and reconstruct the wall surface naturally.",
+      "referenceCount": 0
+    },
+    {
+      "id": "change-object-material",
+      "label": "Change object material",
+      "targetLabel": "coffee table",
+      "instruction": "Change the coffee table material from wood to brushed metal while preserving its shape and position.",
+      "referenceCount": 0
+    },
+    {
+      "id": "change-chair",
+      "label": "Change chair",
+      "targetLabel": "armchair",
+      "instruction": "Replace the armchair with a modern lounge chair with the same footprint and orientation.",
+      "referenceCount": 0
+    }
+  ]
+}

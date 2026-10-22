@@ -202,7 +202,7 @@ export async function enqueueRetry(input: {
       reservationUsdMicros,
     });
     snapshot = parsedEdit;
-    commonInputHash = buildEditCommonInputHash(parsedEdit);
+    commonInputHash = original.commonInputHash ?? buildEditCommonInputHash(parsedEdit);
   } else {
     const originalSnapshot = generationSnapshotSchema.safeParse(original.inputSnapshotJson);
     if (!originalSnapshot.success) {
@@ -298,7 +298,7 @@ export async function enqueueRetry(input: {
           projectId: original.projectId,
           kind: original.kind,
           executionMode,
-          comparisonGroupId: null,
+          comparisonGroupId: original.comparisonGroupId,
           retryOfRunId: runId,
           parentVersionId: isSegment || isEdit ? original.parentVersionId : null,
           inputSelectionId: isEdit ? original.inputSelectionId : null,

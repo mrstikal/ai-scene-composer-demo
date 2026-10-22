@@ -15,12 +15,20 @@ export const SAM_PARSER_VERSION = "0.1.0" as const;
 export const MASK_PIPELINE_VERSION = "mask-pipeline-v1" as const;
 export const MASK_FEATHER_PX = 8 as const;
 export const MASK_PADDING_OPTIONS = [16, 32] as const;
-export const EDIT_MODELS = ["openai/gpt-image-2.5-flare"] as const;
+export const EDIT_MODELS = [
+  "openai/gpt-image-2.5-flare",
+  "openai/gpt-image-2.5-sunburst",
+] as const;
+export const COMPARISON_MODELS = [
+  "openai/gpt-image-2.5-flare",
+  "openai/gpt-image-2.5-sunburst",
+] as const;
 export const EDIT_PROMPT_VERSION = "edit-prompt-v1" as const;
 export const COMPOSITE_PIPELINE_VERSION = "composite-v1" as const;
 
 export type MaskPaddingPx = (typeof MASK_PADDING_OPTIONS)[number];
 export type EditModel = (typeof EDIT_MODELS)[number];
+export type ComparisonModel = (typeof COMPARISON_MODELS)[number];
 
 export const boundsSchema = z
   .object({
@@ -300,13 +308,15 @@ export const generationSnapshotSchema = z
 
 export type GenerationSnapshot = z.infer<typeof generationSnapshotSchema>;
 
-export const evaluationSchema = z.object({
-  boundaryArtifacts: z.number().int().min(1).max(5),
-  promptAdherence: z.number().int().min(1).max(5),
-  referenceFidelity: z.number().int().min(1).max(5).nullable(),
-  plausibility: z.number().int().min(1).max(5),
-  notes: z.string().max(1000),
-});
+export const evaluationSchema = z
+  .object({
+    boundaryArtifacts: z.number().int().min(1).max(5),
+    promptAdherence: z.number().int().min(1).max(5),
+    referenceFidelity: z.number().int().min(1).max(5).nullable(),
+    plausibility: z.number().int().min(1).max(5),
+    notes: z.string().max(1000),
+  })
+  .strict();
 
 export type Evaluation = z.infer<typeof evaluationSchema>;
 
