@@ -128,7 +128,7 @@ export const segmentSnapshotSchema = z
 
 export type SegmentSnapshot = z.infer<typeof segmentSnapshotSchema>;
 
-export const editTransportOptionsSchema = z
+export const imageTransportOptionsSchema = z
   .object({
     aspectRatio: z.literal("1:1"),
     quality: z.literal("medium"),
@@ -144,7 +144,23 @@ export const editTransportOptionsSchema = z
   })
   .strict();
 
-export type EditTransportOptions = z.infer<typeof editTransportOptionsSchema>;
+export type ImageTransportOptions = z.infer<typeof imageTransportOptionsSchema>;
+
+export const IMAGE_TRANSPORT_OPTIONS = {
+  aspectRatio: "1:1",
+  quality: "medium",
+  background: "opaque",
+  n: 1,
+  provider: {
+    only: ["openai"],
+    allowFallbacks: false,
+  },
+  timeoutMs: 300_000,
+} as const satisfies ImageTransportOptions;
+
+export const editTransportOptionsSchema = imageTransportOptionsSchema;
+
+export type EditTransportOptions = ImageTransportOptions;
 
 export const editSourceMetadataSchema = z
   .object({
@@ -236,16 +252,18 @@ export const editMetricsSchema = z
 
 export type EditMetrics = z.infer<typeof editMetricsSchema>;
 
-export const sourceMetadataSchema = z.object({
-  fixtureId: z.string().min(1),
-  provenance: z.enum(["licensed_photo", "synthetic"]),
-  originalSha256: z.string().regex(/^[a-f0-9]{64}$/),
-  normalizedSha256: z.string().regex(/^[a-f0-9]{64}$/),
-  normalizationVersion: z.literal("normalization-v1"),
-  licenseRecord: z.string().nullable(),
-  generator: z.string().optional(),
-  generatorVersion: z.string().optional(),
-});
+export const sourceMetadataSchema = z
+  .object({
+    fixtureId: z.string().min(1),
+    provenance: z.enum(["licensed_photo", "synthetic"]),
+    originalSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    normalizedSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    normalizationVersion: z.literal("normalization-v1"),
+    licenseRecord: z.string().nullable(),
+    generator: z.string().optional(),
+    generatorVersion: z.string().optional(),
+  })
+  .strict();
 
 export type SourceMetadata = z.infer<typeof sourceMetadataSchema>;
 
@@ -272,23 +290,9 @@ export const versionSourceMetadataSchema = z.union([
 
 export type VersionSourceMetadata = z.infer<typeof versionSourceMetadataSchema>;
 
-export const generationTransportOptionsSchema = z
-  .object({
-    aspectRatio: z.literal("1:1"),
-    quality: z.literal("medium"),
-    background: z.literal("opaque"),
-    n: z.literal(1),
-    provider: z
-      .object({
-        only: z.tuple([z.literal("openai")]),
-        allowFallbacks: z.literal(false),
-      })
-      .strict(),
-    timeoutMs: z.literal(300000),
-  })
-  .strict();
+export const generationTransportOptionsSchema = imageTransportOptionsSchema;
 
-export type GenerationTransportOptions = z.infer<typeof generationTransportOptionsSchema>;
+export type GenerationTransportOptions = ImageTransportOptions;
 
 export const generationSnapshotSchema = z
   .object({

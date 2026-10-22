@@ -12,7 +12,7 @@ import { COMPARISON_MODELS } from "../contracts/domain";
 import type { AppDatabase } from "../db/client";
 import { runs, selections, usageEvents, type RunRow, type UsageEventRow } from "../db/schema";
 import { AppError } from "../errors";
-import { toRunSummary } from "../projects/service";
+import { toRunSummary, segmentationReservationQuoteUsdMicros } from "../projects/service";
 
 interface CandidateCostAccumulator {
   knownUsdMicros: number;
@@ -101,8 +101,10 @@ function summarizeCandidateCost(
   };
 }
 
+type ReadDatabase = Pick<AppDatabase, "select">;
+
 function sharedSelectionCost(
-  db: AppDatabase,
+  db: ReadDatabase,
   groupRuns: Array<Pick<RunRow, "inputSelectionId">>,
 ): ComparisonSharedSelectionCostDto | null {
   const selectionId = groupRuns.find((run) => run.inputSelectionId !== null)?.inputSelectionId;
@@ -202,8 +204,7 @@ export function getComparisonDetail(
         .all();
       const usageByRunId = new Map(usageRows.map((usage) => [usage.runId, usage]));
 
-      const segmentationReservationUsdMicros =
-        env === undefined || (env.aiMode === "live" && env.samMode === "live") ? undefined : 0;
+      const segmentationReservationUsdMicros = segmentationReservationQuoteUsdMicros(env);
       const currentExecutionMode = env?.aiMode;
 
       const summaries: RunSummaryDto[] = orderedRuns.map((run) =>
@@ -219,7 +220,7 @@ export function getComparisonDetail(
       return {
         comparisonGroupId,
         runs: summaries,
-        sharedSelectionCost: sharedSelectionCost(tx as unknown as AppDatabase, orderedRuns),
+        sharedSelectionCost: sharedSelectionCost(tx, orderedRuns),
         candidateCost: summarizeCandidateCost(orderedRuns, usageByRunId),
       };
     },

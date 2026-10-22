@@ -204,15 +204,18 @@ export function toRunSummary(
   };
 }
 
+export function segmentationReservationQuoteUsdMicros(
+  env?: Pick<AppEnv, "aiMode" | "samMode">,
+): number | undefined {
+  return env === undefined || (env.aiMode === "live" && env.samMode === "live") ? undefined : 0;
+}
+
 export function getProjectSnapshot(
   db: AppDatabase,
   projectId: string,
   env?: Pick<AppEnv, "imageReservationUsdMicros" | "aiMode" | "samMode">,
 ): ProjectSnapshotDto {
-  const segmentationReservationUsdMicros =
-    env === undefined || (env.aiMode === "live" && env.samMode === "live")
-      ? undefined
-      : 0;
+  const segmentationReservationUsdMicros = segmentationReservationQuoteUsdMicros(env);
 
   return db.transaction(
     (tx) => {
@@ -435,7 +438,7 @@ export async function importSample(input: {
   }
 
   const originalInfo = await inspectImage(sourceBytes);
-  const canonical = await normalizeBase(sourceBytes);
+  const canonical = await normalizeBase(sourceBytes, originalInfo);
   if (canonical.sha256 !== fixture.normalizedSha256) {
     throw new AppError(503, "FIXTURES_NOT_PREPARED", "Fixture normalization hash does not match the manifest.");
   }
@@ -587,7 +590,9 @@ export async function importUploadedAsset(input: {
 
   const originalInfo = await inspectImage(bytes);
   const normalized =
-    role === "base" ? await normalizeBase(bytes) : await normalizeReference(bytes);
+    role === "base"
+      ? await normalizeBase(bytes, originalInfo)
+      : await normalizeReference(bytes, originalInfo);
 
   const originalAssetId = randomUUID();
   const normalizedAssetId = randomUUID();

@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import type { RunDetailDto } from "@/lib/contracts/api";
+import { formatUsd } from "@/lib/ui/format";
 
 function Field(input: { label: string; children: React.ReactNode }) {
   return (
@@ -11,11 +12,6 @@ function Field(input: { label: string; children: React.ReactNode }) {
       <dd className="min-w-0 break-words text-right font-medium text-stone-800">{input.children}</dd>
     </div>
   );
-}
-
-function formatUsd(micros: number | null): string {
-  if (micros === null) return "unavailable";
-  return `USD ${(micros / 1_000_000).toFixed(6)}`;
 }
 
 function RunInputDetail(input: { detail: RunDetailDto }) {

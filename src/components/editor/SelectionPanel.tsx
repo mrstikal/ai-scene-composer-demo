@@ -2,10 +2,7 @@
 
 import type { RunSummaryDto, SelectionDto } from "@/lib/contracts/api";
 import type { MaskPaddingPx, Point } from "@/lib/contracts/domain";
-
-function shortId(id: string): string {
-  return id.slice(0, 8);
-}
+import { shortId } from "@/lib/ui/format";
 
 function pointLabel(point: Point): string {
   return `(${point.x}, ${point.y})`;
@@ -141,9 +138,7 @@ export function SelectionPanel(input: {
         </p>
       ) : null}
 
-      {input.latestRun !== null &&
-      input.latestRun.status === "succeeded" &&
-      input.latestRun.retryMode === "none" ? (
+      {input.latestRun !== null && input.latestRun.status === "succeeded" ? (
         <p className="mt-3 text-xs text-stone-500">
           Last selection succeeded · USD{" "}
           {(input.latestRun.cost.budgetChargeUsdMicros / 1_000_000).toFixed(6)}

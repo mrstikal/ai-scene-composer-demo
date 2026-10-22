@@ -15,21 +15,7 @@ import {
   type ComparisonModel,
   type Evaluation,
 } from "@/lib/contracts/domain";
-
-function shortId(id: string): string {
-  return id.slice(0, 8);
-}
-
-function modelLabel(model: string): string {
-  if (model === "openai/gpt-image-2.5-flare") return "Flare";
-  if (model === "openai/gpt-image-2.5-sunburst") return "Sunburst";
-  return model;
-}
-
-function formatUsd(micros: number | null): string {
-  if (micros === null) return "unavailable";
-  return `USD ${(micros / 1_000_000).toFixed(6)}`;
-}
+import { formatUsd, modelLabel, shortId } from "@/lib/ui/format";
 
 function CostState(input: { run: RunSummaryDto }) {
   const { cost } = input.run;
@@ -110,7 +96,7 @@ function CandidateCard(input: {
             onClick={() => setView("raw")}
             disabled={rawUrl === null}
           >
-            Raw
+            Raw (normalized for display)
           </button>
         </div>
       </div>

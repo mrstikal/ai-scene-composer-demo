@@ -236,6 +236,9 @@ export function featherAlpha(
 
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      if (allowedMask[index] === 0) continue;
+
       let validErodes = 0;
       for (let distance = 1; distance <= featherPx; distance += 1) {
         const x0 = Math.max(0, x - distance);
@@ -245,7 +248,7 @@ export function featherAlpha(
         const area = (x1 - x0) * (y1 - y0);
         if (rectangleSum(sat, stride, x0, y0, x1, y1) === area) validErodes += 1;
       }
-      alpha[y * width + x] = Math.round((255 * validErodes) / featherPx);
+      alpha[index] = Math.round((255 * validErodes) / featherPx);
     }
   }
   return alpha;

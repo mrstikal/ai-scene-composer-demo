@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { sha256Hex } from "../assets/store";
@@ -40,35 +40,48 @@ export function validateSamCapture(
     model?: string;
   },
 ): string | null {
+  return validateSamCaptureDetails(capture, request).reason;
+}
+
+function validateSamCaptureDetails(
+  capture: SamCapture,
+  request: {
+    sourceSha256: string;
+    width: number;
+    height: number;
+    positivePoints: readonly Point[];
+    negativePoints: readonly Point[];
+    model?: string;
+  },
+): { reason: string | null; fullMask: FullFrameMask | null } {
   if (capture.sourceCanonicalSha256 !== request.sourceSha256) {
-    return "SAM capture is bound to a different source image.";
+    return { reason: "SAM capture is bound to a different source image.", fullMask: null };
   }
   if (capture.width !== request.width || capture.height !== request.height) {
-    return "SAM capture dimensions do not match the source image.";
+    return { reason: "SAM capture dimensions do not match the source image.", fullMask: null };
   }
   if (capture.model !== (request.model ?? SAM_MODEL)) {
-    return "SAM capture model does not match the configured model.";
+    return { reason: "SAM capture model does not match the configured model.", fullMask: null };
   }
   if (!samePoints(capture.positivePoints, request.positivePoints)) {
-    return "SAM capture does not match the positive point.";
+    return { reason: "SAM capture does not match the positive point.", fullMask: null };
   }
   if (!samePoints(capture.negativePoints, request.negativePoints)) {
-    return "SAM capture does not match the negative point.";
+    return { reason: "SAM capture does not match the negative point.", fullMask: null };
   }
 
   try {
-    buildFullFrameMaskFromRecords({
+    const fullMask = buildFullFrameMaskFromRecords({
       records: capture.records,
       frameWidth: capture.width,
       frameHeight: capture.height,
       positive: capture.positivePoints[0],
       negative: capture.negativePoints[0] ?? null,
     });
+    return { reason: null, fullMask };
   } catch {
-    return "SAM capture records are not a valid completed segmentation.";
+    return { reason: "SAM capture records are not a valid completed segmentation.", fullMask: null };
   }
-
-  return null;
 }
 
 export type SamCaptureLookup =
@@ -78,6 +91,7 @@ export type SamCaptureLookup =
       relativePath: string;
       absolutePath: string;
       sha256: string;
+      fullMask: FullFrameMask;
     }
   | { status: "missing" }
   | { status: "invalid"; reason: string };
@@ -115,8 +129,10 @@ export function loadSamCapture(input: {
     return { status: "invalid", reason: "SAM capture does not match the captured-live schema." };
   }
 
-  const reason = validateSamCapture(parsed.data, input);
-  if (reason !== null) return { status: "invalid", reason };
+  const validation = validateSamCaptureDetails(parsed.data, input);
+  if (validation.reason !== null || validation.fullMask === null) {
+    return { status: "invalid", reason: validation.reason ?? "SAM capture is invalid." };
+  }
 
   return {
     status: "ready",
@@ -124,22 +140,29 @@ export function loadSamCapture(input: {
     relativePath,
     absolutePath,
     sha256: sha256Hex(fileBytes),
+    fullMask: validation.fullMask,
   };
 }
 
-export function replaySamCapture(capture: SamCapture): {
+export function replaySamCapture(
+  capture: SamCapture,
+  fullMask?: FullFrameMask,
+): {
   records: SamMaskRecord[];
   fullMask: FullFrameMask;
 } {
-  const fullMask = buildFullFrameMaskFromRecords({
+  return {
     records: capture.records,
-    frameWidth: capture.width,
-    frameHeight: capture.height,
-    positive: capture.positivePoints[0],
-    negative: capture.negativePoints[0] ?? null,
-  });
-
-  return { records: capture.records, fullMask };
+    fullMask:
+      fullMask ??
+      buildFullFrameMaskFromRecords({
+        records: capture.records,
+        frameWidth: capture.width,
+        frameHeight: capture.height,
+        positive: capture.positivePoints[0],
+        negative: capture.negativePoints[0] ?? null,
+      }),
+  };
 }
 
 export function samFixturePaths(repoRoot: string): {
@@ -165,6 +188,17 @@ export interface SamFixtureStatus {
   reason: string | null;
 }
 
+let cachedFixtureStatus: { key: string; status: SamFixtureStatus } | null = null;
+
+function fileSignature(path: string): string {
+  try {
+    const stats = statSync(/* turbopackIgnore: true */ path);
+    return `${stats.mtimeMs}:${stats.size}`;
+  } catch {
+    return "missing";
+  }
+}
+
 export function samFixtureStatus(
   repoRoot: string,
   sampleCanonicalSha256?: string,
@@ -177,6 +211,23 @@ export function samFixtureStatusAtRoot(
   sampleCanonicalSha256?: string,
 ): SamFixtureStatus {
   const paths = samFixturePathsAtRoot(fixtureRoot);
+  const cacheKey = [
+    fixtureRoot,
+    sampleCanonicalSha256 ?? "",
+    fileSignature(paths.positive),
+    fileSignature(paths.negative),
+  ].join("|");
+  if (cachedFixtureStatus?.key === cacheKey) return cachedFixtureStatus.status;
+
+  const status = computeSamFixtureStatus(paths, sampleCanonicalSha256);
+  cachedFixtureStatus = { key: cacheKey, status };
+  return status;
+}
+
+function computeSamFixtureStatus(
+  paths: { positive: string; negative: string },
+  sampleCanonicalSha256?: string,
+): SamFixtureStatus {
   for (const [name, path] of [
     [SAM_POSITIVE_CAPTURE, paths.positive],
     [SAM_NEGATIVE_CAPTURE, paths.negative],
@@ -203,14 +254,16 @@ export function samFixtureStatusAtRoot(
       return { ready: false, reason: `${name} is bound to a different source image.` };
     }
 
-    const reason = validateSamCapture(parsed.data, {
+    const validation = validateSamCaptureDetails(parsed.data, {
       sourceSha256: parsed.data.sourceCanonicalSha256,
       width: parsed.data.width,
       height: parsed.data.height,
       positivePoints: parsed.data.positivePoints,
       negativePoints: parsed.data.negativePoints,
     });
-    if (reason !== null) return { ready: false, reason: `${name}: ${reason}` };
+    if (validation.reason !== null) {
+      return { ready: false, reason: `${name}: ${validation.reason}` };
+    }
   }
 
   return { ready: true, reason: null };

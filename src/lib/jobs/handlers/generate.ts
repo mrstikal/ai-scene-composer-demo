@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { and, eq, isNull } from "drizzle-orm";
 
-import { readAssetBytes, sha256Hex, writeAssetBytes } from "../../assets/store";
+import { readAssetBytes, sha256Hex } from "../../assets/store";
 import {
   generationSnapshotSchema,
   type GenerationSnapshot,
@@ -18,9 +18,15 @@ import { markRunFailed } from "../queue";
 import { parseProviderReceipt } from "../receipt";
 import type { RunHandler, RunHandlerContext } from "../worker";
 import { createPendingUsageEvent, markUsageUnknown } from "../../usage/service";
-import { markRunNeedsReview, settleRunAttempt } from "../settlement";
+import { markRunNeedsReview } from "../settlement";
 import { createGenerationAdapter } from "../../providers/factory";
 import type { ImageGenerationAdapter, ImageGenerationResult } from "../../providers/types";
+import {
+  saveImageAsset,
+  saveImageReceipt,
+  saveInvalidResultRawAsset,
+} from "../image-assets";
+import { settleImageResult } from "../image-settlement";
 
 export interface GenerateHandlerOptions {
   adapterFactory?: (run: RunRow, context: RunHandlerContext) => ImageGenerationAdapter;
@@ -47,47 +53,6 @@ function generationMetadata(snapshot: GenerationSnapshot): GenerationSourceMetad
   };
 }
 
-function settleResult(
-  context: RunHandlerContext,
-  run: RunRow,
-  snapshot: GenerationSnapshot,
-  result: ImageGenerationResult,
-): number | null {
-  if (result.kind === "ambiguous") {
-    markUsageUnknown(context.db, run.id);
-    return null;
-  }
-
-  const observed = result.observedCostUsdMicros;
-  const mock = run.executionMode === "mock";
-
-  if (result.kind === "rejected") {
-    const amount = observed ?? 0;
-    settleRunAttempt(context, run.id, {
-      outcome: "rejected",
-      amountUsdMicros: amount,
-      costProvenance: mock ? "calculated" : observed === null ? "calculated" : "provider",
-      chargeUsdMicros: amount,
-      usageJson: result.usage,
-      providerRequestId: result.providerRequestId,
-      elapsedMs: result.latencyMs,
-    });
-    return amount;
-  }
-
-  const amount = mock ? 0 : observed ?? snapshot.reservationUsdMicros;
-  settleRunAttempt(context, run.id, {
-    outcome: "completed",
-    amountUsdMicros: amount,
-    costProvenance: mock ? "calculated" : observed !== null ? "provider" : "estimated",
-    chargeUsdMicros: amount,
-    usageJson: result.usage,
-    providerRequestId: result.providerRequestId,
-    elapsedMs: result.latencyMs,
-  });
-  return amount;
-}
-
 async function saveRawAsset(
   context: RunHandlerContext,
   run: RunRow,
@@ -98,33 +63,8 @@ async function saveRawAsset(
     height: number;
   },
 ): Promise<string> {
-  const assetId = randomUUID();
-  const written = await writeAssetBytes({
-    assetDir: context.env.assetDir,
-    projectId: run.projectId,
-    assetId,
-    mimeType: input.mimeType,
-    bytes: input.bytes,
-  });
-  const now = Date.now();
-
-  context.db
-    .insert(assets)
-    .values({
-      id: assetId,
-      projectId: run.projectId,
-      kind: "raw",
-      relativePath: written.relativePath,
-      sha256: written.sha256,
-      mimeType: input.mimeType,
-      width: input.width,
-      height: input.height,
-      bytes: input.bytes.length,
-      createdAt: now,
-    })
-    .run();
-
-  return assetId;
+  const asset = await saveImageAsset({ context, run, kind: "raw", ...input });
+  return asset.id;
 }
 
 async function saveCanonicalAsset(
@@ -134,32 +74,16 @@ async function saveCanonicalAsset(
   width: number,
   height: number,
 ): Promise<string> {
-  const assetId = randomUUID();
-  const written = await writeAssetBytes({
-    assetDir: context.env.assetDir,
-    projectId: run.projectId,
-    assetId,
-    mimeType: "image/png",
+  const asset = await saveImageAsset({
+    context,
+    run,
+    kind: "canonical",
     bytes,
+    mimeType: "image/png",
+    width,
+    height,
   });
-
-  context.db
-    .insert(assets)
-    .values({
-      id: assetId,
-      projectId: run.projectId,
-      kind: "canonical",
-      relativePath: written.relativePath,
-      sha256: written.sha256,
-      mimeType: "image/png",
-      width,
-      height,
-      bytes: bytes.length,
-      createdAt: Date.now(),
-    })
-    .run();
-
-  return assetId;
+  return asset.id;
 }
 
 function installRoot(
@@ -254,30 +178,7 @@ async function persistImage(
     height: result.height,
   });
 
-  immediateTransaction(context.sqlite, () => {
-    context.db
-      .update(runs)
-      .set({
-        rawAssetId,
-        providerReceiptJson: {
-          kind: "image",
-          complete: true,
-          rawAssetId,
-          responseMetadata: {
-            providerRequestId: result.providerRequestId,
-            usage: result.usage,
-            observedCostUsdMicros: result.observedCostUsdMicros,
-            latencyMs: result.latencyMs,
-            nativeWidth: result.width,
-            nativeHeight: result.height,
-            mimeType: result.mimeType,
-          },
-        },
-        stage: "processing",
-      })
-      .where(eq(runs.id, run.id))
-      .run();
-  });
+  saveImageReceipt(context, run, rawAssetId, result);
 
   let normalized;
   try {
@@ -311,20 +212,7 @@ async function persistInvalid(
   run: RunRow,
   result: Extract<ImageGenerationResult, { kind: "invalid" }>,
 ): Promise<void> {
-  if (result.bytes !== undefined && result.mimeType !== undefined) {
-    const rawAssetId = await saveRawAsset(context, run, {
-      bytes: result.bytes,
-      mimeType: result.mimeType,
-      width: result.width ?? 0,
-      height: result.height ?? 0,
-    });
-    context.db
-      .update(runs)
-      .set({ rawAssetId, stage: "processing" })
-      .where(eq(runs.id, run.id))
-      .run();
-  }
-
+  await saveInvalidResultRawAsset(context, run, result);
   markRunFailed(context.db, run, {
     code: "INVALID_PROVIDER_OUTPUT",
     message: result.message,
@@ -559,7 +447,7 @@ export function createGenerateHandler(options: GenerateHandlerOptions = {}): Run
       return;
     }
 
-    settleResult(context, run, snapshot, result);
+    settleImageResult(context, run, snapshot.reservationUsdMicros, result);
 
     if (result.kind === "ambiguous") {
       markRunNeedsReview(context.db, run.id, { message: result.message });

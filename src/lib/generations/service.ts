@@ -8,6 +8,7 @@ import { assertCompatibleConfig, getPricingConfig, getProviderCapabilities } fro
 import { getScenePreset, SCENE_PRESET_VERSION, type ScenePresetId } from "../../config/scene-presets";
 import type { CostConsent, GenerationInput, GenerationResponse } from "../contracts/api";
 import {
+  IMAGE_TRANSPORT_OPTIONS,
   generationSnapshotSchema,
   type GenerationSnapshot,
   type GenerationTransportOptions,
@@ -27,17 +28,7 @@ import {
 import { assertProjectCanCreateRoot } from "../projects/service";
 import { assertReservationAllowed } from "../budget/service";
 
-export const GENERATION_TRANSPORT_OPTIONS: GenerationTransportOptions = {
-  aspectRatio: "1:1",
-  quality: "medium",
-  background: "opaque",
-  n: 1,
-  provider: {
-    only: ["openai"],
-    allowFallbacks: false,
-  },
-  timeoutMs: 300_000,
-};
+export const GENERATION_TRANSPORT_OPTIONS: GenerationTransportOptions = IMAGE_TRANSPORT_OPTIONS;
 
 export function resolveGenerationPrompt(input: GenerationInput): {
   mode: "preset" | "custom";
@@ -139,6 +130,7 @@ export async function enqueueGeneration(input: {
     presetId: resolved.presetId,
     presetVersion: resolved.presetVersion,
     prompt: resolved.prompt,
+    costConsent,
   });
 
   const replay = replayIdempotent(findIdempotency(db, projectId, idempotencyKey), operation, requestHash);

@@ -17,6 +17,7 @@ import {
 } from "@/lib/contracts/domain";
 import { EvaluationForm } from "@/components/runs/EvaluationForm";
 import { RunDetailPanel } from "@/components/runs/RunDetailPanel";
+import { formatUsd, shortId } from "@/lib/ui/format";
 import { ReferencePicker } from "./ReferencePicker";
 
 export interface EditFormInput {
@@ -24,15 +25,6 @@ export interface EditFormInput {
   instruction: string;
   referenceIds: string[];
   model: EditModel;
-}
-
-function shortId(id: string): string {
-  return id.slice(0, 8);
-}
-
-function formatUsd(micros: number | null): string {
-  if (micros === null) return "unavailable";
-  return `$${(micros / 1_000_000).toFixed(6)}`;
 }
 
 function ResultCard(input: {
@@ -83,7 +75,7 @@ function ResultCard(input: {
             onClick={() => setView("raw")}
             disabled={rawUrl === null}
           >
-            Raw
+            Raw (normalized for display)
           </button>
         </div>
       </div>

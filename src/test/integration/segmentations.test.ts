@@ -207,6 +207,12 @@ describe("SAM selection enqueue and mock worker", () => {
       .all();
     const maskRow = assetRows.find((asset) => asset.id === selection.binaryMaskAssetId);
     expect(maskRow?.kind).toBe("selection_mask");
+    expect(assetRows.filter((asset) => asset.kind === "selection_mask")).toHaveLength(1);
+    const storedRun = testEnv.handle.db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(storedRun?.providerReceiptJson).toMatchObject({
+      representation: "full-mask-asset",
+      binaryMaskAssetId: selection.binaryMaskAssetId,
+    });
     if (maskRow === undefined) throw new Error("Selection mask asset is missing.");
     const decoded = await decodeMaskPng(
       await readAssetBytes(testEnv.env.assetDir, maskRow.relativePath),
@@ -345,6 +351,16 @@ describe("SAM selection enqueue and mock worker", () => {
     expect(
       testEnv.handle.db.select().from(runs).where(eq(runs.projectId, projectId)).all(),
     ).toHaveLength(1);
+  });
+
+  it("conflicts when the same key is replayed with different cost consent", async () => {
+    const { projectId, rootVersionId } = await sampleProject();
+    const key = randomUUID();
+    await enqueue(projectId, rootVersionId, { x: 420, y: 610 }, { key });
+
+    await expect(
+      enqueue(projectId, rootVersionId, { x: 420, y: 610 }, { key, reservation: 1 }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
   });
 
   it("validates point counts, ranges, identity and source ownership before enqueue", async () => {

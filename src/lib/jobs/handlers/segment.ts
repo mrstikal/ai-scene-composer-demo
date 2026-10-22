@@ -32,13 +32,14 @@ import { markRunFailed } from "../queue";
 import { parseProviderReceipt } from "../receipt";
 import type { RunHandler, RunHandlerContext } from "../worker";
 import { createPendingUsageEvent, markUsageUnknown } from "../../usage/service";
-import { markRunNeedsReview, settleRunAttempt } from "../settlement";
+import { markRunNeedsReview } from "../settlement";
+import { settleSegmentResult } from "../image-settlement";
 import { createSegmentationAdapter } from "../../providers/factory";
 import type {
   SegmentationAdapter,
   SegmentationAdapterResult,
 } from "../../providers/types";
-import { loadSamCapture, replaySamCapture } from "../../sam/capture";
+import { loadSamCapture } from "../../sam/capture";
 
 export interface SegmentHandlerOptions {
   adapterFactory?: (run: RunRow, context: RunHandlerContext) => SegmentationAdapter;
@@ -89,49 +90,6 @@ function markSegmentFailed(
 ): void {
   const current = context.db.select().from(runs).where(eq(runs.id, run.id)).get() ?? run;
   markRunFailed(context.db, current, { code, message, preProvider: false });
-}
-
-function settleResult(
-  context: RunHandlerContext,
-  run: RunRow,
-  result: SegmentationAdapterResult,
-  calculatedCostUsdMicros: number,
-): number | null {
-  if (result.kind === "ambiguous") {
-    markUsageUnknown(context.db, run.id);
-    return null;
-  }
-
-  const live = run.executionMode === "live";
-  const observed = result.observedCostUsdMicros;
-
-  if (result.kind === "rejected") {
-    const amount = live ? observed : 0;
-    const provenance = live ? (observed === null ? "unavailable" : "provider") : "calculated";
-    settleRunAttempt(context, run.id, {
-      outcome: "rejected",
-      amountUsdMicros: amount,
-      costProvenance: provenance,
-      chargeUsdMicros: amount,
-      usageJson: result.usage,
-      providerRequestId: result.providerRequestId,
-      elapsedMs: result.latencyMs,
-    });
-    return amount;
-  }
-
-  const amount = live ? observed ?? calculatedCostUsdMicros : 0;
-  const provenance = live ? (observed === null ? "calculated" : "provider") : "calculated";
-  settleRunAttempt(context, run.id, {
-    outcome: "completed",
-    amountUsdMicros: amount,
-    costProvenance: provenance,
-    chargeUsdMicros: amount,
-    usageJson: result.usage,
-    providerRequestId: result.providerRequestId,
-    elapsedMs: result.latencyMs,
-  });
-  return amount;
 }
 
 async function readSourceImage(
@@ -249,7 +207,7 @@ async function saveFullMaskReceipt(
   run: RunRow,
   snapshot: SegmentSnapshot,
   result: Extract<SegmentationAdapterResult, { kind: "mask"; representation: "full-mask" }>,
-): Promise<void> {
+): Promise<SavedMaskAsset> {
   const maskBytes = await encodeMaskPng(result.fullMask, result.width, result.height);
   const maskAsset = await writeMaskAsset({
     context,
@@ -277,6 +235,7 @@ async function saveFullMaskReceipt(
     })
     .where(eq(runs.id, run.id))
     .run();
+  return maskAsset;
 }
 
 function toRegionVariant(input: {
@@ -302,6 +261,7 @@ async function persistSelection(
   run: RunRow,
   snapshot: SegmentSnapshot,
   fullMask: FullFrameMask,
+  existingBinaryMask?: { id: string; width: number; height: number },
 ): Promise<void> {
   const existing = findSelectionByRun(context.db, run.id);
   if (existing !== undefined) {
@@ -321,15 +281,27 @@ async function persistSelection(
     negative: snapshot.negativePoints[0] ?? null,
   });
 
-  const selectionMaskBytes = await encodeMaskPng(fullMask.mask, fullMask.width, fullMask.height);
-  const selectionMask = await writeMaskAsset({
-    context,
-    run,
-    kind: "selection_mask",
-    bytes: selectionMaskBytes,
-    width: fullMask.width,
-    height: fullMask.height,
-  });
+  if (
+    existingBinaryMask !== undefined &&
+    (existingBinaryMask.width !== fullMask.width || existingBinaryMask.height !== fullMask.height)
+  ) {
+    throw new AppError(422, "INVALID_SELECTION", "The saved SAM mask has wrong dimensions.");
+  }
+
+  let selectionMask: SavedMaskAsset | { id: string; width: number; height: number };
+  if (existingBinaryMask !== undefined) {
+    selectionMask = existingBinaryMask;
+  } else {
+    const selectionMaskBytes = await encodeMaskPng(fullMask.mask, fullMask.width, fullMask.height);
+    selectionMask = await writeMaskAsset({
+      context,
+      run,
+      kind: "selection_mask",
+      bytes: selectionMaskBytes,
+      width: fullMask.width,
+      height: fullMask.height,
+    });
+  }
 
   const variants = new Map<
     16 | 32,
@@ -396,13 +368,14 @@ async function persistSelection(
         return;
       }
 
+      const regionAssets = [variant16.allowed, variant16.blend, variant32.allowed, variant32.blend];
+      const assetsToInsert =
+        existingBinaryMask === undefined
+          ? [selectionMask as SavedMaskAsset, ...regionAssets]
+          : regionAssets;
       context.db
         .insert(assets)
-        .values(
-          [selectionMask, variant16.allowed, variant16.blend, variant32.allowed, variant32.blend].map(
-            (asset) => assetRow(run, asset),
-          ),
-        )
+        .values(assetsToInsert.map((asset) => assetRow(run, asset)))
         .run();
 
       context.db
@@ -491,7 +464,7 @@ async function resumeFromReceipt(
     return;
   }
 
-  await persistSelection(context, run, snapshot, decoded);
+  await persistSelection(context, run, snapshot, decoded, maskAsset);
 }
 
 function createFixtureAdapter(
@@ -515,15 +488,14 @@ function createFixtureAdapter(
     return null;
   }
 
-  const replay = replaySamCapture(lookup.capture);
   return {
     segment: async () => ({
       kind: "mask",
       representation: "sam-records",
-      records: replay.records,
-      fullMask: replay.fullMask.mask,
-      width: replay.fullMask.width,
-      height: replay.fullMask.height,
+      records: lookup.capture.records,
+      fullMask: lookup.fullMask.mask,
+      width: lookup.fullMask.width,
+      height: lookup.fullMask.height,
       providerRequestId: null,
       observedCostUsdMicros: 0,
       usage: {
@@ -722,7 +694,7 @@ export function createSegmentHandler(options: SegmentHandlerOptions = {}): RunHa
       return;
     }
 
-    settleResult(context, run, result, calculatedCostUsdMicros);
+    settleSegmentResult(context, run, calculatedCostUsdMicros, result);
 
     if (result.kind === "ambiguous") {
       markRunNeedsReview(context.db, run.id, {
@@ -743,16 +715,23 @@ export function createSegmentHandler(options: SegmentHandlerOptions = {}): RunHa
     }
 
     try {
+      let binaryMask: SavedMaskAsset | undefined;
       if (result.representation === "sam-records") {
         saveSamRecordsReceipt(context, run, snapshot, result);
       } else {
-        await saveFullMaskReceipt(context, run, snapshot, result);
+        binaryMask = await saveFullMaskReceipt(context, run, snapshot, result);
       }
-      await persistSelection(context, run, snapshot, {
-        mask: result.fullMask,
-        width: result.width,
-        height: result.height,
-      });
+      await persistSelection(
+        context,
+        run,
+        snapshot,
+        {
+          mask: result.fullMask,
+          width: result.width,
+          height: result.height,
+        },
+        binaryMask,
+      );
     } catch {
       markSegmentFailed(context, run, "LOCAL_PROCESSING_FAILED", "Local selection processing failed.");
     }

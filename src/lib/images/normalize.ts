@@ -67,13 +67,7 @@ export async function inspectImage(
   bytes: Buffer,
   options: { maxBytes?: number } = {},
 ): Promise<InspectedImage> {
-  const maxBytes = options.maxBytes ?? MAX_INPUT_BYTES;
-  if (bytes.length === 0) {
-    throw new AppError(422, "INVALID_IMAGE", "Image is empty.");
-  }
-  if (bytes.length > maxBytes) {
-    throw new AppError(413, "UPLOAD_TOO_LARGE", "Image file is too large.");
-  }
+  assertImageBytes(bytes, options.maxBytes ?? MAX_INPUT_BYTES);
 
   let metadata: ImageMetadataLike;
   try {
@@ -86,6 +80,15 @@ export async function inspectImage(
   }
 
   return assertSupportedMetadata(metadata);
+}
+
+function assertImageBytes(bytes: Buffer, maxBytes: number): void {
+  if (bytes.length === 0) {
+    throw new AppError(422, "INVALID_IMAGE", "Image is empty.");
+  }
+  if (bytes.length > maxBytes) {
+    throw new AppError(413, "UPLOAD_TOO_LARGE", "Image file is too large.");
+  }
 }
 
 export interface NormalizedImage {
@@ -108,8 +111,15 @@ function normalizedResult(data: Buffer, info: { width: number; height: number })
   };
 }
 
-export async function normalizeBase(bytes: Buffer): Promise<NormalizedImage> {
-  await inspectImage(bytes);
+export async function normalizeBase(
+  bytes: Buffer,
+  inspected?: InspectedImage,
+): Promise<NormalizedImage> {
+  if (inspected === undefined) {
+    await inspectImage(bytes);
+  } else {
+    assertImageBytes(bytes, MAX_INPUT_BYTES);
+  }
 
   try {
     const { data, info } = await sharp(bytes, {
@@ -136,8 +146,15 @@ export async function normalizeBase(bytes: Buffer): Promise<NormalizedImage> {
   }
 }
 
-export async function normalizeReference(bytes: Buffer): Promise<NormalizedImage> {
-  await inspectImage(bytes);
+export async function normalizeReference(
+  bytes: Buffer,
+  inspected?: InspectedImage,
+): Promise<NormalizedImage> {
+  if (inspected === undefined) {
+    await inspectImage(bytes);
+  } else {
+    assertImageBytes(bytes, MAX_INPUT_BYTES);
+  }
 
   try {
     const { data, info } = await sharp(bytes, {
@@ -170,17 +187,6 @@ export async function inspectProviderImage(bytes: Buffer): Promise<InspectedImag
   }
   if (inspected.width < 512 || inspected.width > 4096) {
     throw new AppError(422, "INVALID_IMAGE", "Provider image side must be between 512 and 4096 pixels.");
-  }
-
-  try {
-    await sharp(bytes, {
-      failOn: "error",
-      limitInputPixels: MAX_INPUT_PIXELS,
-    })
-      .raw()
-      .toBuffer();
-  } catch {
-    throw new AppError(422, "INVALID_IMAGE", "Provider image pixels could not be decoded.");
   }
   return inspected;
 }

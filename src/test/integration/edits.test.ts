@@ -457,6 +457,39 @@ describe("mock edit pipeline and immutable child versions", () => {
       snapshot.versions.filter((version) => version.parentVersionId === firstRun.outputVersionId),
     ).toHaveLength(1);
   });
+  it("fails before provider dispatch when a mask asset row is missing", async () => {
+    const { projectId, rootVersionId } = await sampleProject();
+    const selectionId = await createSelection(projectId, rootVersionId);
+    const stored = await enqueueEditFor({
+      projectId,
+      parentVersionId: rootVersionId,
+      selectionId,
+    });
+    const runId = (stored.body as { runId: string }).runId;
+    const snapshot = getProjectSnapshot(testEnv.handle.db, projectId, testEnv.env);
+    const selection = snapshot.selections.find((candidate) => candidate.id === selectionId);
+    if (selection === undefined) throw new Error("Selection is missing.");
+    testEnv.handle.db
+      .delete(assets)
+      .where(eq(assets.id, selection.regions.variants["16"].allowedMaskAssetId))
+      .run();
+
+    const worker = await runEdit(() => ({
+      edit: async () => {
+        throw new Error("The provider must not be called.");
+      },
+    }));
+    expect(worker.status).toBe("handled");
+
+    const storedRun = testEnv.handle.db.select().from(runs).where(eq(runs.id, runId)).get();
+    expect(storedRun).toMatchObject({
+      status: "failed",
+      errorCode: "INVALID_RUN_STATE",
+      providerStartedAt: null,
+      budgetChargeUsdMicros: 0,
+    });
+    expect(getUsageEventByRunId(testEnv.handle.db, runId)).toBeUndefined();
+  });
 });
 
 describe("live edit cost, failure and recovery paths", () => {

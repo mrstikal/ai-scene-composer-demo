@@ -1,11 +1,7 @@
 "use client";
 
 import type { CostBucketsDto, ProjectCostsDto } from "@/lib/contracts/api";
-
-function formatUsd(micros: number | null): string {
-  if (micros === null) return "unavailable";
-  return `USD ${(micros / 1_000_000).toFixed(6)}`;
-}
+import { formatUsd } from "@/lib/ui/format";
 
 function formatLimit(micros: number): string {
   return `$${(micros / 1_000_000).toFixed(2)}`;

@@ -13,6 +13,7 @@ import type { CostConsent, EditResponse } from "../contracts/api";
 import {
   EDIT_MODELS,
   EDIT_PROMPT_VERSION,
+  IMAGE_TRANSPORT_OPTIONS,
   MASK_FEATHER_PX,
   MASK_PIPELINE_VERSION,
   editSnapshotSchema,
@@ -273,14 +274,7 @@ export function buildEditSnapshotForModel(input: {
     pricingVersion: input.pricingVersion,
     capabilityVersion: input.capabilityVersion,
     reservationUsdMicros: input.reservationUsdMicros,
-    transportOptions: {
-      aspectRatio: "1:1",
-      quality: "medium",
-      background: "opaque",
-      n: 1,
-      provider: { only: ["openai"], allowFallbacks: false },
-      timeoutMs: 300000,
-    },
+    transportOptions: IMAGE_TRANSPORT_OPTIONS,
   });
 
   return { snapshot, commonInputHash: buildEditCommonInputHash(snapshot) };
@@ -373,6 +367,7 @@ export async function enqueueEdit(input: {
     instruction: text.instruction,
     referenceAssetIds: input.referenceAssetIds,
     model,
+    costConsent: input.costConsent,
   });
   const replay = replayIdempotent(findIdempotency(db, projectId, idempotencyKey), "edit", requestHash);
   if (replay !== null) return replay;

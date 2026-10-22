@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 
 import type { AppDatabase } from "../db/client";
 import { runs, type RunRow } from "../db/schema";
@@ -124,6 +124,7 @@ export function markRunFailed(
   input: { code: string; message: string; preProvider: boolean },
 ): void {
   const current = db.select().from(runs).where(eq(runs.id, run.id)).get() ?? run;
+  if (current.status !== "queued" && current.status !== "running") return;
   const releaseReservation = input.preProvider && current.providerStartedAt === null;
   db.update(runs)
     .set({
@@ -134,6 +135,6 @@ export function markRunFailed(
       errorMessage: input.message,
       budgetChargeUsdMicros: releaseReservation ? 0 : current.budgetChargeUsdMicros,
     })
-    .where(eq(runs.id, run.id))
+    .where(and(eq(runs.id, run.id), inArray(runs.status, ["queued", "running"])))
     .run();
 }

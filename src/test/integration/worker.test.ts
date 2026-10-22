@@ -110,6 +110,26 @@ describe("failure settlement", () => {
     const stored = testEnv.handle.db.select().from(runs).where(eq(runs.id, claimed.id)).get();
     expect(stored?.budgetChargeUsdMicros).toBe(180_000);
   });
+
+  it("does not overwrite a run that already reached a terminal status", () => {
+    const project = createProject(testEnv.handle.db, testEnv.env, "Terminal");
+    const claimed = insertRun(testEnv.handle.db, project.id);
+    testEnv.handle.db
+      .update(runs)
+      .set({ status: "succeeded", stage: "done", finishedAt: Date.now() })
+      .where(eq(runs.id, claimed.id))
+      .run();
+
+    markRunFailed(testEnv.handle.db, claimed, {
+      code: "HANDLER_ERROR",
+      message: "late failure",
+      preProvider: true,
+    });
+
+    const stored = testEnv.handle.db.select().from(runs).where(eq(runs.id, claimed.id)).get();
+    expect(stored?.status).toBe("succeeded");
+    expect(stored?.errorCode).toBeNull();
+  });
 });
 
 describe("startup recovery", () => {

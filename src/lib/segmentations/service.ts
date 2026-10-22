@@ -190,6 +190,7 @@ export async function enqueueSegmentation(input: {
     sourceVersionId,
     positivePoints: [points.positive],
     negativePoints: points.negative === null ? [] : [points.negative],
+    costConsent,
   });
   const replay = replayIdempotent(findIdempotency(db, projectId, idempotencyKey), operation, requestHash);
   if (replay !== null) return replay;

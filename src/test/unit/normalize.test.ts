@@ -42,12 +42,13 @@ describe("image validation", () => {
     );
   });
 
-  it("rejects header-valid provider images whose pixels cannot be decoded", async () => {
+  it("rejects header-valid provider images whose pixels cannot be decoded during normalization", async () => {
     const valid = await createTestImage({ width: 1024, height: 1024 });
     const truncated = valid.subarray(0, Math.floor(valid.length * 0.6));
     await expect(inspectImage(truncated)).resolves.toBeDefined();
-    await expect(inspectProviderImage(truncated)).rejects.toThrow(
-      "pixels could not be decoded",
+    await expect(inspectProviderImage(truncated)).resolves.toBeDefined();
+    await expect(normalizeProviderImage(truncated)).rejects.toThrow(
+      "Provider image could not be normalized.",
     );
   });
 

@@ -83,7 +83,9 @@ export function classifyRetryMode(
     if (receiptKind(run) === "segment" && run.errorCode === "LOCAL_PROCESSING_FAILED") {
       return "local";
     }
-    if (run.executionMode === "fixture") return "none";
+    if (run.executionMode === "fixture" && run.errorCode !== "PROVIDER_UNAVAILABLE") {
+      return "none";
+    }
     if (run.providerStartedAt !== null || run.errorCode === "PROVIDER_UNAVAILABLE") {
       return "provider";
     }

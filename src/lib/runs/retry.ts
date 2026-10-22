@@ -35,18 +35,6 @@ import { assertReservationAllowed } from "../budget/service";
 import { getUsageEventByRunId } from "../usage/service";
 import { classifyRetryMode } from "./retry-mode";
 
-function replayStored(
-  existing: Parameters<typeof replayIdempotent>[0],
-  operation: string,
-  requestHash: string,
-): StoredIdempotentResponse {
-  const replay = replayIdempotent(existing, operation, requestHash);
-  if (replay === null) {
-    throw new AppError(409, "IDEMPOTENCY_CONFLICT", "The stored idempotency response is unavailable.");
-  }
-  return replay;
-}
-
 export function getRunOrThrow(db: DatabaseHandle["db"], runId: string): RunRow {
   const run = db.select().from(runs).where(eq(runs.id, runId)).get();
   if (run === undefined) {
@@ -80,21 +68,28 @@ export async function enqueueRetry(input: {
   const { db, sqlite } = handle;
   const original = getRunOrThrow(db, runId);
 
-  const localRequestHash = hashRequest({ operation: "retry_local", runId });
+  const localRequestHash = hashRequest({ operation: "retry_local", runId, costConsent });
   const providerRequestHash = hashRequest({
     operation: "retry_provider",
     runId,
     acknowledgePossibleDuplicateCharge,
+    costConsent,
   });
   const existingRecord = findIdempotency(db, original.projectId, idempotencyKey);
   if (existingRecord !== undefined) {
     if (existingRecord.operation === "retry_local") {
-      return replayStored(existingRecord, "retry_local", localRequestHash);
+      const replay = replayIdempotent(existingRecord, "retry_local", localRequestHash);
+      if (replay !== null) return replay;
     }
     if (existingRecord.operation === "retry_provider") {
-      return replayStored(existingRecord, "retry_provider", providerRequestHash);
+      const replay = replayIdempotent(existingRecord, "retry_provider", providerRequestHash);
+      if (replay !== null) return replay;
     }
-    return replayStored(existingRecord, existingRecord.operation, "__not_a_retry__");
+    throw new AppError(
+      409,
+      "IDEMPOTENCY_CONFLICT",
+      "The Idempotency-Key was already used with a different request.",
+    );
   }
 
   assertCompatibleConfig();

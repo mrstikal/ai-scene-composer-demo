@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { and, eq, isNull } from "drizzle-orm";
 
-import { readAssetBytes, sha256Hex, writeAssetBytes } from "../../assets/store";
+import { readAssetBytes, sha256Hex } from "../../assets/store";
 import {
   editMetricsSchema,
   editSnapshotSchema,
@@ -10,7 +10,6 @@ import {
   type EditMetrics,
   type EditSnapshot,
   type EditSourceMetadata,
-  type ProviderReceipt,
 } from "../../contracts/domain";
 import type { AppDatabase } from "../../db/client";
 import { assets, projects, runs, versions, type RunRow } from "../../db/schema";
@@ -25,23 +24,20 @@ import { markRunFailed } from "../queue";
 import { parseProviderReceipt } from "../receipt";
 import type { RunHandler, RunHandlerContext } from "../worker";
 import { createPendingUsageEvent, markUsageUnknown } from "../../usage/service";
-import { markRunNeedsReview, settleRunAttempt } from "../settlement";
+import { markRunNeedsReview } from "../settlement";
 import { createEditAdapter } from "../../providers/factory";
 import type { ImageEditAdapter, ImageGenerationResult } from "../../providers/types";
+import {
+  insertImageAsset,
+  saveImageAsset,
+  saveImageReceipt,
+  saveInvalidResultRawAsset,
+  writeImageAsset,
+} from "../image-assets";
+import { settleImageResult } from "../image-settlement";
 
 export interface EditHandlerOptions {
   adapterFactory?: (run: RunRow, context: RunHandlerContext) => ImageEditAdapter;
-}
-
-interface SavedAsset {
-  id: string;
-  relativePath: string;
-  sha256: string;
-  bytes: number;
-  width: number;
-  height: number;
-  mimeType: "image/png" | "image/jpeg" | "image/webp";
-  createdAt: number;
 }
 
 function parseSnapshot(run: RunRow): EditSnapshot {
@@ -91,162 +87,10 @@ function markEditFailed(
   markRunFailed(context.db, current, { code, message, preProvider: false });
 }
 
-function settleResult(
-  context: RunHandlerContext,
-  run: RunRow,
-  snapshot: EditSnapshot,
-  result: ImageGenerationResult,
-): number | null {
-  if (result.kind === "ambiguous") {
-    markUsageUnknown(context.db, run.id);
-    return null;
-  }
-
-  const observed = result.observedCostUsdMicros;
-  const mock = run.executionMode === "mock";
-
-  if (result.kind === "rejected") {
-    const amount = observed ?? 0;
-    settleRunAttempt(context, run.id, {
-      outcome: "rejected",
-      amountUsdMicros: amount,
-      costProvenance: mock ? "calculated" : observed === null ? "calculated" : "provider",
-      chargeUsdMicros: amount,
-      usageJson: result.usage,
-      providerRequestId: result.providerRequestId,
-      elapsedMs: result.latencyMs,
-    });
-    return amount;
-  }
-
-  const amount = mock ? 0 : observed ?? snapshot.reservationUsdMicros;
-  settleRunAttempt(context, run.id, {
-    outcome: "completed",
-    amountUsdMicros: amount,
-    costProvenance: mock ? "calculated" : observed !== null ? "provider" : "estimated",
-    chargeUsdMicros: amount,
-    usageJson: result.usage,
-    providerRequestId: result.providerRequestId,
-    elapsedMs: result.latencyMs,
-  });
-  return amount;
-}
-
-function assetRow(run: RunRow, asset: SavedAsset, kind: "raw" | "canonical" | "final") {
-  return {
-    id: asset.id,
-    projectId: run.projectId,
-    kind,
-    relativePath: asset.relativePath,
-    sha256: asset.sha256,
-    mimeType: asset.mimeType,
-    width: asset.width,
-    height: asset.height,
-    bytes: asset.bytes,
-    createdAt: asset.createdAt,
-  };
-}
-
-async function writeAsset(input: {
-  context: RunHandlerContext;
-  run: RunRow;
-  bytes: Buffer;
-  mimeType: "image/png" | "image/jpeg" | "image/webp";
-  width: number;
-  height: number;
-}): Promise<SavedAsset> {
-  const assetId = randomUUID();
-  const written = await writeAssetBytes({
-    assetDir: input.context.env.assetDir,
-    projectId: input.run.projectId,
-    assetId,
-    mimeType: input.mimeType,
-    bytes: input.bytes,
-  });
-  return {
-    id: assetId,
-    relativePath: written.relativePath,
-    sha256: written.sha256,
-    bytes: input.bytes.length,
-    width: input.width,
-    height: input.height,
-    mimeType: input.mimeType,
-    createdAt: Date.now(),
-  };
-}
-
-async function saveRawAsset(
-  context: RunHandlerContext,
-  run: RunRow,
-  input: {
-    bytes: Buffer;
-    mimeType: "image/png" | "image/jpeg" | "image/webp";
-    width: number;
-    height: number;
-  },
-): Promise<SavedAsset> {
-  const asset = await writeAsset({ context, run, ...input });
-  context.db.insert(assets).values(assetRow(run, asset, "raw")).run();
-  return asset;
-}
-
-async function saveCanonicalAsset(
-  context: RunHandlerContext,
-  run: RunRow,
-  bytes: Buffer,
-): Promise<SavedAsset> {
-  const asset = await writeAsset({
-    context,
-    run,
-    bytes,
-    mimeType: "image/png",
-    width: 1024,
-    height: 1024,
-  });
-  context.db.insert(assets).values(assetRow(run, asset, "canonical")).run();
-  return asset;
-}
-
-function saveReceipt(
-  context: RunHandlerContext,
-  run: RunRow,
-  rawAssetId: string,
-  result: Extract<ImageGenerationResult, { kind: "image" }>,
-): Extract<ProviderReceipt, { kind: "image" }> {
-  const receipt = {
-    kind: "image" as const,
-    complete: true as const,
-    rawAssetId,
-    responseMetadata: {
-      providerRequestId: result.providerRequestId,
-      usage: result.usage,
-      observedCostUsdMicros: result.observedCostUsdMicros,
-      latencyMs: result.latencyMs,
-      nativeWidth: result.width,
-      nativeHeight: result.height,
-      mimeType: result.mimeType,
-    },
-  };
-  context.db
-    .update(runs)
-    .set({
-      rawAssetId,
-      providerReceiptJson: receipt,
-      stage: "processing",
-    })
-    .where(eq(runs.id, run.id))
-    .run();
-  return receipt;
-}
-
-async function loadSourceAndMasks(
+async function loadSourceBytes(
   context: RunHandlerContext,
   snapshot: EditSnapshot,
-): Promise<{
-  sourceBytes: Buffer;
-  allowedMask: Uint8Array;
-  blendMask: Uint8Array;
-}> {
+): Promise<Buffer> {
   const sourceAsset = context.db
     .select()
     .from(assets)
@@ -265,7 +109,10 @@ async function loadSourceAndMasks(
   if (sha256Hex(sourceBytes) !== snapshot.sourceSha256) {
     throw new AppError(422, "INVALID_RUN_STATE", "The edit source hash changed after enqueue.");
   }
+  return sourceBytes;
+}
 
+function findMaskAssets(context: RunHandlerContext, snapshot: EditSnapshot) {
   const binaryAsset = context.db
     .select()
     .from(assets)
@@ -294,6 +141,19 @@ async function loadSourceAndMasks(
   ) {
     throw new AppError(422, "INVALID_SELECTION", "The edit region assets are missing or changed.");
   }
+  return { binaryAsset, allowedAsset, blendAsset };
+}
+
+async function loadSourceAndMasks(
+  context: RunHandlerContext,
+  snapshot: EditSnapshot,
+): Promise<{
+  sourceBytes: Buffer;
+  allowedMask: Uint8Array;
+  blendMask: Uint8Array;
+}> {
+  const sourceBytes = await loadSourceBytes(context, snapshot);
+  const { allowedAsset, blendAsset } = findMaskAssets(context, snapshot);
 
   const allowed = await decodeMaskPng(
     await readAssetBytes(context.env.assetDir, allowedAsset.relativePath),
@@ -401,7 +261,7 @@ async function persistFinalAndChild(input: {
     return;
   }
 
-  const finalAsset = await writeAsset({
+  const finalAsset = await writeImageAsset({
     context,
     run,
     bytes: composite.bytes,
@@ -431,7 +291,7 @@ async function persistFinalAndChild(input: {
         return;
       }
 
-      context.db.insert(assets).values(assetRow(run, finalAsset, "final")).run();
+      insertImageAsset(context, run, finalAsset, "final");
       context.db
         .insert(versions)
         .values({
@@ -533,7 +393,15 @@ async function processReceipt(
       };
     } catch {
       const normalized = await normalizeReceiptImage(rawBytes);
-      const saved = await saveCanonicalAsset(context, run, normalized.bytes);
+      const saved = await saveImageAsset({
+        context,
+        run,
+        kind: "canonical",
+        bytes: normalized.bytes,
+        mimeType: "image/png",
+        width: 1024,
+        height: 1024,
+      });
       context.db
         .update(runs)
         .set({ normalizedRawAssetId: saved.id, stage: "processing" })
@@ -543,7 +411,15 @@ async function processReceipt(
     }
   } else {
     const normalized = await normalizeReceiptImage(rawBytes);
-    const saved = await saveCanonicalAsset(context, run, normalized.bytes);
+    const saved = await saveImageAsset({
+      context,
+      run,
+      kind: "canonical",
+      bytes: normalized.bytes,
+      mimeType: "image/png",
+      width: 1024,
+      height: 1024,
+    });
     context.db
       .update(runs)
       .set({ normalizedRawAssetId: saved.id, stage: "processing" })
@@ -579,19 +455,7 @@ async function persistInvalid(
   run: RunRow,
   result: Extract<ImageGenerationResult, { kind: "invalid" }>,
 ): Promise<void> {
-  if (result.bytes !== undefined && result.mimeType !== undefined) {
-    const rawAsset = await saveRawAsset(context, run, {
-      bytes: result.bytes,
-      mimeType: result.mimeType,
-      width: result.width ?? 0,
-      height: result.height ?? 0,
-    });
-    context.db
-      .update(runs)
-      .set({ rawAssetId: rawAsset.id, stage: "processing" })
-      .where(eq(runs.id, run.id))
-      .run();
-  }
+  await saveInvalidResultRawAsset(context, run, result);
   markEditFailed(context, run, "INVALID_PROVIDER_OUTPUT", result.message);
 }
 
@@ -663,8 +527,8 @@ export function createEditHandler(options: EditHandlerOptions = {}): RunHandler 
     let sourceBytes: Buffer;
     let referenceBytes: Buffer[];
     try {
-      const regions = await loadSourceAndMasks(context, snapshot);
-      sourceBytes = regions.sourceBytes;
+      sourceBytes = await loadSourceBytes(context, snapshot);
+      findMaskAssets(context, snapshot);
       referenceBytes = await loadReferenceImages(context, snapshot);
     } catch {
       markRunFailed(context.db, run, {
@@ -773,7 +637,7 @@ export function createEditHandler(options: EditHandlerOptions = {}): RunHandler 
       return;
     }
 
-    settleResult(context, run, snapshot, result);
+    settleImageResult(context, run, snapshot.reservationUsdMicros, result);
 
     if (result.kind === "ambiguous") {
       markRunNeedsReview(context.db, run.id, { message: result.message });
@@ -791,13 +655,16 @@ export function createEditHandler(options: EditHandlerOptions = {}): RunHandler 
     }
 
     try {
-      const rawAsset = await saveRawAsset(context, run, {
+      const rawAsset = await saveImageAsset({
+        context,
+        run,
+        kind: "raw",
         bytes: result.bytes,
         mimeType: result.mimeType,
         width: result.width,
         height: result.height,
       });
-      const receipt = saveReceipt(context, run, rawAsset.id, result);
+      const receipt = saveImageReceipt(context, run, rawAsset.id, result);
       await processReceipt(context, run, snapshot, receipt);
     } catch (error) {
       if (error instanceof AppError && error.code === "INVALID_PROVIDER_OUTPUT") {
