@@ -13,7 +13,7 @@ import type {
   ProviderReceipt,
   Regions,
   RunInputSnapshot,
-  SourceMetadata,
+  VersionSourceMetadata,
 } from "../contracts/domain";
 
 export const ASSET_KINDS = [
@@ -78,7 +78,7 @@ export const versions = sqliteTable(
       .references(() => assets.id),
     origin: text("origin", { enum: VERSION_ORIGINS }).notNull(),
     originalAssetId: text("original_asset_id").references(() => assets.id),
-    sourceMetadataJson: text("source_metadata_json", { mode: "json" }).$type<SourceMetadata | null>(),
+    sourceMetadataJson: text("source_metadata_json", { mode: "json" }).$type<VersionSourceMetadata | null>(),
     originatingRunId: text("originating_run_id"),
     createdAt: integer("created_at").notNull(),
   },
@@ -173,6 +173,9 @@ export const runs = sqliteTable(
       table.createdAt,
       table.id,
     ),
+    uniqueIndex("runs_one_active_generation_per_project")
+      .on(table.projectId)
+      .where(sql`${table.kind} = 'generate' and ${table.status} in ('queued', 'running')`),
   ],
 );
 

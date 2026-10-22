@@ -88,6 +88,9 @@ export function settleUsageEvent(
 }
 
 export function markUsageUnknown(db: AppDatabase, runId: string): void {
+  const existing = getUsageEventByRunId(db, runId);
+  if (existing === undefined || existing.settledAt !== null) return;
+
   settleUsageEvent(db, {
     runId,
     outcome: "unknown",

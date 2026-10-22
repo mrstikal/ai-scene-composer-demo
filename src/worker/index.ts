@@ -3,7 +3,8 @@ import nextEnv from "@next/env";
 import { getEnv } from "../lib/config/env";
 import { createDatabase } from "../lib/db/client";
 import { isDatabaseMigrated } from "../lib/db/migrate";
-import { runWorkerLoop, type HandlerRegistry } from "../lib/jobs/worker";
+import { createProductionHandlers } from "../lib/jobs/handlers";
+import { runWorkerLoop } from "../lib/jobs/worker";
 
 async function main(): Promise<void> {
   nextEnv.loadEnvConfig(process.cwd());
@@ -22,7 +23,7 @@ async function main(): Promise<void> {
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);
 
-  const handlers: HandlerRegistry = {};
+  const handlers = createProductionHandlers();
 
   try {
     await runWorkerLoop({

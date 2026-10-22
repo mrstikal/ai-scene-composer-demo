@@ -2,7 +2,7 @@
 
 Local single-user Next.js application for scene upload/sample, version history and, in later phases, AI generation, SAM selection and object-aware editing. The delivery contract is [AI_SCENE_COMPOSER_POC_PLAN.md](./AI_SCENE_COMPOSER_POC_PLAN.md).
 
-Current implementation: **Phase 1 local foundation**. Upload, bundled sample, project/version read-back, health, worker foundation and deterministic mock adapters are implemented. Generation, SAM selection and editing are added in later phases.
+Current implementation: **Phase 2 preset and custom AI scene creation**. Upload, bundled sample, project/version read-back, health, worker foundation, deterministic mock adapters, and preset/custom generation through the real queue, receipts, root creation and cost accounting are implemented. SAM selection and editing are added in later phases.
 
 ## Requirements
 
@@ -67,12 +67,18 @@ npm test                 # Vitest unit and integration tests
 npm run typecheck        # strict TypeScript
 npm run lint             # ESLint
 npm run build            # production build
-npm run test:e2e         # Playwright (later phases add browser scenarios)
+npm run test:e2e         # Playwright mock preset/custom generation
 npm run test:live        # guarded opt-in live smoke (later phases)
 RESET_LOCAL_DATA=1 npm run data:reset
 ```
 
 `data:reset` is destructive, requires stopped web/worker processes and refuses custom storage paths outside the dedicated `data/` and `assets-local/` directories.
+
+## Generation
+
+The Generate tab offers exactly three server-resolved presets and a Custom Prompt option. Preset text is read-only and resolved on the server; custom text is trimmed and limited to 1-2000 characters. The form requires explicit cost consent showing the current pricing version and reservation.
+
+`POST /api/generations` requires an `Idempotency-Key`, accepts only an empty project, and returns `202 {runId}`. The worker calls the selected adapter exactly once, persists raw/canonical assets, a durable receipt and a UsageEvent, then atomically installs the root. Mock generation returns the labeled synthetic scene with a zero calculated charge; it still exercises the real queue, receipt, root and accounting paths. A late generation that loses the root race keeps its artifacts/cost and fails with `ROOT_ALREADY_EXISTS`. Failed or ambiguous runs expose a server-derived retry mode; receipt-only local retries reuse the same Run without another provider call.
 
 ## Storage and safety
 

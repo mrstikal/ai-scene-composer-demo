@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { SCENE_PRESET_IDS } from "../../config/scene-presets";
+
 export const pointSchema = z.object({
   x: z.number().int().min(0).max(1023),
   y: z.number().int().min(0).max(1023),
@@ -19,6 +21,65 @@ export const sourceMetadataSchema = z.object({
 });
 
 export type SourceMetadata = z.infer<typeof sourceMetadataSchema>;
+
+export const generationSourceMetadataSchema = z
+  .object({
+    kind: z.literal("generation"),
+    mode: z.enum(["preset", "custom"]),
+    presetId: z.enum(SCENE_PRESET_IDS).nullable(),
+    presetVersion: z.literal("v1").nullable(),
+    promptSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    model: z.literal("openai/gpt-image-2.5-flare"),
+    pricingVersion: z.string().min(1),
+    capabilityVersion: z.string().min(1),
+  })
+  .strict();
+
+export type GenerationSourceMetadata = z.infer<typeof generationSourceMetadataSchema>;
+
+export const versionSourceMetadataSchema = z.union([
+  sourceMetadataSchema,
+  generationSourceMetadataSchema,
+]);
+
+export type VersionSourceMetadata = z.infer<typeof versionSourceMetadataSchema>;
+
+export const generationTransportOptionsSchema = z
+  .object({
+    aspectRatio: z.literal("1:1"),
+    quality: z.literal("medium"),
+    background: z.literal("opaque"),
+    n: z.literal(1),
+    provider: z
+      .object({
+        only: z.tuple([z.literal("openai")]),
+        allowFallbacks: z.literal(false),
+      })
+      .strict(),
+    timeoutMs: z.literal(300000),
+  })
+  .strict();
+
+export type GenerationTransportOptions = z.infer<typeof generationTransportOptionsSchema>;
+
+export const generationSnapshotSchema = z
+  .object({
+    operation: z.literal("generate"),
+    mode: z.enum(["preset", "custom"]),
+    presetId: z.enum(SCENE_PRESET_IDS).nullable(),
+    presetVersion: z.literal("v1").nullable(),
+    prompt: z.string().min(1).max(2000),
+    promptSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    model: z.literal("openai/gpt-image-2.5-flare"),
+    executionMode: z.enum(["mock", "live"]),
+    transportOptions: generationTransportOptionsSchema,
+    pricingVersion: z.string().min(1),
+    capabilityVersion: z.string().min(1),
+    reservationUsdMicros: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type GenerationSnapshot = z.infer<typeof generationSnapshotSchema>;
 
 export const evaluationSchema = z.object({
   boundaryArtifacts: z.number().int().min(1).max(5),

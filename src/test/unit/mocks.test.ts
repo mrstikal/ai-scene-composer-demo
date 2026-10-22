@@ -24,6 +24,8 @@ describe("deterministic mock adapters", () => {
       fixturePath: join(process.cwd(), "src/test/fixtures/synthetic/living-room-v1.png"),
       prompt: "ignored",
     });
+    expect(result.kind).toBe("image");
+    if (result.kind !== "image") throw new Error("Expected an image result.");
     expect(result.width).toBe(1024);
     expect(result.height).toBe(1024);
     expect(result.mimeType).toBe("image/png");

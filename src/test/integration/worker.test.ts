@@ -5,7 +5,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runs } from "@/lib/db/schema";
 import { claimNextRun, recoverRunningRuns } from "@/lib/jobs/queue";
 import { runOnce } from "@/lib/jobs/worker";
-import { getUsageEventByRunId, createPendingUsageEvent, settleUsageEvent } from "@/lib/usage/service";
+import {
+  createPendingUsageEvent,
+  getUsageEventByRunId,
+  markUsageUnknown,
+  settleUsageEvent,
+} from "@/lib/usage/service";
 import { createProject } from "@/lib/projects/service";
 import { createTestEnvironment, type TestEnvironment } from "@/test/helpers/environment";
 import { insertAssetRow, insertRun } from "@/test/helpers/domain";
@@ -24,7 +29,7 @@ describe("worker claim and run-once", () => {
   it("claims the oldest queued run and never claims it twice", () => {
     const project = createProject(testEnv.handle.db, testEnv.env, "Claims");
     const older = insertRun(testEnv.handle.db, project.id, { createdAt: 1000 });
-    const newer = insertRun(testEnv.handle.db, project.id, { createdAt: 2000 });
+    const newer = insertRun(testEnv.handle.db, project.id, { kind: "edit", createdAt: 2000 });
 
     const first = claimNextRun(testEnv.handle.db);
     expect(first?.id).toBe(older.id);
@@ -216,6 +221,35 @@ describe("startup recovery", () => {
     expect(usage?.outcome).toBe("unknown");
     expect(usage?.amountUsdMicros).toBeNull();
     expect(usage?.costProvenance).toBe("unavailable");
+  });
+});
+
+describe("usage settlement safety", () => {
+  it("does not overwrite an already settled event with unknown", () => {
+    const project = createProject(testEnv.handle.db, testEnv.env, "Usage");
+    const run = insertRun(testEnv.handle.db, project.id);
+    createPendingUsageEvent(testEnv.handle.db, {
+      projectId: project.id,
+      runId: run.id,
+      operation: "generate",
+      provider: "openrouter",
+      model: "mock",
+      executionMode: "mock",
+      pricingVersion: "2026-10-21-v1",
+      pricingSourceSnapshot: {},
+    });
+    settleUsageEvent(testEnv.handle.db, {
+      runId: run.id,
+      outcome: "completed",
+      amountUsdMicros: 12_345,
+      costProvenance: "provider",
+    });
+
+    markUsageUnknown(testEnv.handle.db, run.id);
+    const usage = getUsageEventByRunId(testEnv.handle.db, run.id);
+    expect(usage?.outcome).toBe("completed");
+    expect(usage?.amountUsdMicros).toBe(12_345);
+    expect(usage?.costProvenance).toBe("provider");
   });
 });
 

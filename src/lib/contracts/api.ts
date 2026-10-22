@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { SCENE_PRESET_IDS } from "../../config/scene-presets";
+
 export const createProjectSchema = z
   .object({
     title: z.string().trim().min(1).max(120).optional(),
@@ -27,6 +29,52 @@ export type ActiveVersionInput = z.infer<typeof activeVersionSchema>;
 export const assetRoleSchema = z.enum(["base", "reference"]);
 
 export type AssetRole = z.infer<typeof assetRoleSchema>;
+
+export const costConsentSchema = z
+  .object({
+    pricingVersion: z.string().regex(/^\d{4}-\d{2}-\d{2}-v[1-9]\d*$/),
+    reservationUsdMicros: z.number().int().nonnegative(),
+    acknowledged: z.literal(true),
+  })
+  .strict();
+
+export type CostConsent = z.infer<typeof costConsentSchema>;
+
+export const generationInputSchema = z.discriminatedUnion("mode", [
+  z
+    .object({
+      mode: z.literal("preset"),
+      presetId: z.enum(SCENE_PRESET_IDS),
+    })
+    .strict(),
+  z
+    .object({
+      mode: z.literal("custom"),
+      prompt: z.string().trim().min(1).max(2000),
+    })
+    .strict(),
+]);
+
+export type GenerationInput = z.infer<typeof generationInputSchema>;
+
+export const generationRequestSchema = z
+  .object({
+    projectId: z.string().uuid(),
+    input: generationInputSchema,
+    costConsent: costConsentSchema,
+  })
+  .strict();
+
+export type GenerationRequest = z.infer<typeof generationRequestSchema>;
+
+export const retryRequestSchema = z
+  .object({
+    costConsent: costConsentSchema,
+    acknowledgePossibleDuplicateCharge: z.boolean(),
+  })
+  .strict();
+
+export type RetryRequest = z.infer<typeof retryRequestSchema>;
 
 export const idempotencyKeySchema = z.string().uuid();
 
@@ -90,6 +138,13 @@ export interface SelectionDto {
   createdAt: number;
 }
 
+export interface RunInputSummaryDto {
+  mode: "preset" | "custom";
+  presetId: string | null;
+}
+
+export type RetryMode = "local" | "provider" | "none";
+
 export interface RunSummaryDto {
   id: string;
   kind: "generate" | "segment" | "edit";
@@ -100,6 +155,10 @@ export interface RunSummaryDto {
   parentVersionId: string | null;
   outputVersionId: string | null;
   outputSelectionId: string | null;
+  inputSummary: RunInputSummaryDto | null;
+  retryMode: RetryMode;
+  retryReservationUsdMicros: number;
+  providerLatencyMs: number | null;
   errorCode: string | null;
   errorMessage: string | null;
   cost: {
@@ -133,6 +192,36 @@ export interface ProjectSnapshotDto {
   selections: SelectionDto[];
   runs: RunSummaryDto[];
   pricing: PublicPricingDto;
+}
+
+export interface GenerationResponse {
+  runId: string;
+}
+
+export interface RetryResponse {
+  runId: string;
+}
+
+export interface RunDetailDto {
+  run: RunSummaryDto;
+  input: {
+    mode: "preset" | "custom";
+    presetId: string | null;
+    presetVersion: string | null;
+    prompt: string;
+    model: string;
+    pricingVersion: string;
+    capabilityVersion: string;
+    reservationUsdMicros: number;
+  } | null;
+  usage: {
+    outcome: "pending" | "completed" | "rejected" | "unknown";
+    amountUsdMicros: number | null;
+    costProvenance: "provider" | "calculated" | "estimated" | "unavailable";
+    pricingVersion: string;
+    providerRequestId: string | null;
+    elapsedMs: number | null;
+  } | null;
 }
 
 export interface ProjectListDto {

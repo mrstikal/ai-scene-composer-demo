@@ -13,6 +13,7 @@ import {
 import type {
   ImageAdapterInput,
   ImageAdapterResult,
+  ImageGenerationResult,
   ImageModel,
   SegmentationAdapterInput,
   SegmentationAdapterResult,
@@ -21,7 +22,7 @@ import type {
 export async function mockGenerate(input: {
   fixturePath: string;
   prompt: string;
-}): Promise<ImageAdapterResult> {
+}): Promise<ImageGenerationResult> {
   const bytes = await readFile(input.fixturePath);
   const inspected = await inspectProviderImage(bytes);
   if (inspected.width !== CANONICAL_SIZE || inspected.height !== CANONICAL_SIZE) {
@@ -29,6 +30,7 @@ export async function mockGenerate(input: {
   }
 
   return {
+    kind: "image",
     bytes,
     mimeType: inspected.mimeType,
     width: inspected.width,

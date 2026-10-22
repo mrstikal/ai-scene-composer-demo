@@ -76,7 +76,7 @@ describe("pricing and provider configuration", () => {
     expect(capabilities.contractFreeze.automaticRetries).toBe(false);
   });
 
-  it("exposes only safe pricing fields", () => {
+  it("exposes only safe pricing fields and honors the configured image reservation", () => {
     const pricing = getPublicPricing();
     expect(pricing.reservations.imageUsdMicros).toBe(250_000);
     expect(pricing.reservations.comparisonUsdMicros).toBe(500_000);
@@ -86,5 +86,9 @@ describe("pricing and provider configuration", () => {
       "openai/gpt-image-2.5-flare",
       "openai/gpt-image-2.5-sunburst",
     ]);
+
+    const overridden = getPublicPricing({ imageReservationUsdMicros: 300_000 });
+    expect(overridden.reservations.imageUsdMicros).toBe(300_000);
+    expect(overridden.reservations.comparisonUsdMicros).toBe(600_000);
   });
 });

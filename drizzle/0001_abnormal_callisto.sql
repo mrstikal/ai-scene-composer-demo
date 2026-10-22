@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `runs_one_active_generation_per_project` ON `runs` (`project_id`) WHERE "runs"."kind" = 'generate' and "runs"."status" in ('queued', 'running');

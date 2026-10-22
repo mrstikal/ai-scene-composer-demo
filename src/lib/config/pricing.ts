@@ -118,15 +118,17 @@ export function assertCompatibleConfig(): void {
   }
 }
 
-export function getPublicPricing(): PublicPricingDto {
+export function getPublicPricing(env?: { imageReservationUsdMicros: number }): PublicPricingDto {
   const pricing = getPricingConfig();
+  const imageUsdMicros = env?.imageReservationUsdMicros ?? pricing.reservations.image.usdMicros;
   return {
     version: pricing.version,
     currency: pricing.currency,
     reservations: {
       projectBudgetUsdMicros: pricing.reservations.projectBudget.usdMicros,
-      imageUsdMicros: pricing.reservations.image.usdMicros,
-      comparisonUsdMicros: pricing.reservations.comparison.usdMicros,
+      imageUsdMicros,
+      comparisonUsdMicros:
+        env === undefined ? pricing.reservations.comparison.usdMicros : imageUsdMicros * 2,
       segmentationUsdMicros: pricing.reservations.segmentation.usdMicros,
     },
     models: Object.entries(pricing.providers.openrouter.models).map(([id, model]) => ({

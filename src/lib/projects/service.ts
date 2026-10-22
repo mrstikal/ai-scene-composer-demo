@@ -29,11 +29,13 @@ import {
   projects,
   runs,
   selections,
+  usageEvents,
   versions,
   type AssetRow,
   type ProjectRow,
   type RunRow,
   type SelectionRow,
+  type UsageEventRow,
   type VersionRow,
 } from "../db/schema";
 import { immediateTransaction } from "../db/transaction";
@@ -47,6 +49,7 @@ import {
   type StoredIdempotentResponse,
 } from "../idempotency/service";
 import { inspectImage, normalizeBase, normalizeReference } from "../images/normalize";
+import { classifyRetryMode, inputSummaryFor, retryReservationUsdMicros } from "../runs/retry-mode";
 import type { AssetRole } from "../contracts/api";
 
 export function createProject(db: AppDatabase, env: AppEnv, title?: string): ProjectRow {
@@ -137,7 +140,12 @@ function toSelectionDto(row: SelectionRow): SelectionDto {
   };
 }
 
-export function toRunSummary(row: RunRow): RunSummaryDto {
+export function toRunSummary(
+  row: RunRow,
+  usage?: UsageEventRow,
+  imageReservationUsdMicros?: number,
+): RunSummaryDto {
+  const retryMode = classifyRetryMode(row, usage);
   return {
     id: row.id,
     kind: row.kind,
@@ -148,6 +156,10 @@ export function toRunSummary(row: RunRow): RunSummaryDto {
     parentVersionId: row.parentVersionId,
     outputVersionId: row.outputVersionId,
     outputSelectionId: row.outputSelectionId,
+    inputSummary: inputSummaryFor(row),
+    retryMode,
+    retryReservationUsdMicros: retryReservationUsdMicros(row, retryMode, imageReservationUsdMicros),
+    providerLatencyMs: usage?.elapsedMs ?? null,
     errorCode: row.errorCode,
     errorMessage: row.errorMessage,
     cost: {
@@ -160,7 +172,11 @@ export function toRunSummary(row: RunRow): RunSummaryDto {
   };
 }
 
-export function getProjectSnapshot(db: AppDatabase, projectId: string): ProjectSnapshotDto {
+export function getProjectSnapshot(
+  db: AppDatabase,
+  projectId: string,
+  env?: Pick<AppEnv, "imageReservationUsdMicros">,
+): ProjectSnapshotDto {
   const project = getProjectOrThrow(db, projectId);
   const versionRows = db
     .select()
@@ -180,13 +196,21 @@ export function getProjectSnapshot(db: AppDatabase, projectId: string): ProjectS
     .where(eq(runs.projectId, projectId))
     .orderBy(asc(runs.createdAt), asc(runs.id))
     .all();
+  const usageRows = db
+    .select()
+    .from(usageEvents)
+    .where(eq(usageEvents.projectId, projectId))
+    .all();
+  const usageByRunId = new Map(usageRows.map((usage) => [usage.runId, usage]));
 
   return {
     project: toProjectDto(project),
     versions: versionRows.map(toVersionDto),
     selections: selectionRows.map(toSelectionDto),
-    runs: runRows.map(toRunSummary),
-    pricing: getPublicPricing(),
+    runs: runRows.map((row) =>
+      toRunSummary(row, usageByRunId.get(row.id), env?.imageReservationUsdMicros),
+    ),
+    pricing: getPublicPricing(env),
   };
 }
 
@@ -209,7 +233,7 @@ export function setActiveVersion(
   return versionId;
 }
 
-function assertProjectCanCreateRoot(db: AppDatabase, projectId: string): ProjectRow {
+export function assertProjectCanCreateRoot(db: AppDatabase, projectId: string): ProjectRow {
   const project = getProjectOrThrow(db, projectId);
   if (project.rootVersionId !== null) {
     throw new AppError(409, "ROOT_ALREADY_EXISTS", "This project already has a root scene.");
