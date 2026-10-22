@@ -13,7 +13,7 @@ function main(): void {
   }
 
   throw new Error(
-    "The live smoke suite is implemented in a later phase. No provider calls were made.",
+    "No automated paid live suite is enabled in this PoC. Live evidence is blocked/partial; see docs/live-evidence.md. No provider calls were made.",
   );
 }
 

@@ -984,7 +984,7 @@ export function AppShell() {
       </header>
 
       <main className="mx-auto grid max-w-7xl gap-4 p-4 lg:grid-cols-[300px_minmax(0,1fr)_320px]">
-        <aside className="space-y-4">
+        <aside className="min-w-0 space-y-4">
           <section className="rounded-xl border border-stone-300 bg-white p-4">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500">Project</h2>
             <div className="mt-3 space-y-2">
@@ -1040,6 +1040,7 @@ export function AppShell() {
                   <div className="grid grid-cols-3 gap-1 rounded-lg bg-stone-100 p-1">
                     <button
                       type="button"
+                      aria-pressed={tab === "sample"}
                       className={`rounded-md px-2 py-1.5 text-sm ${tab === "sample" ? "bg-white shadow-sm" : "text-stone-600"}`}
                       onClick={() => setTab("sample")}
                     >
@@ -1047,6 +1048,7 @@ export function AppShell() {
                     </button>
                     <button
                       type="button"
+                      aria-pressed={tab === "upload"}
                       className={`rounded-md px-2 py-1.5 text-sm ${tab === "upload" ? "bg-white shadow-sm" : "text-stone-600"}`}
                       onClick={() => setTab("upload")}
                     >
@@ -1054,6 +1056,7 @@ export function AppShell() {
                     </button>
                     <button
                       type="button"
+                      aria-pressed={tab === "generate"}
                       className={`rounded-md px-2 py-1.5 text-sm ${tab === "generate" ? "bg-white shadow-sm" : "text-stone-600"}`}
                       onClick={() => setTab("generate")}
                     >
@@ -1266,7 +1269,7 @@ export function AppShell() {
           </section>
         </aside>
 
-        <section className="min-h-[420px] rounded-xl border border-stone-300 bg-white p-4">
+        <section className="min-h-[420px] min-w-0 rounded-xl border border-stone-300 bg-white p-4">
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500">Scene</h2>
             {activeVersion !== null ? (
@@ -1297,24 +1300,28 @@ export function AppShell() {
           )}
         </section>
 
-        <aside className="space-y-4">
+        <aside className="min-w-0 space-y-4">
           {error !== null ? (
             <div role="alert" className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-800">
               {error}
             </div>
           ) : null}
           {notice !== null ? (
-            <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-800">
+            <div
+              role="status"
+              aria-live="polite"
+              className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-800"
+            >
               {notice}
             </div>
           ) : null}
           {connectionWarning !== null ? (
-            <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
               {connectionWarning}
             </div>
           ) : null}
           {workerWarning ? (
-            <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <div role="status" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
               The worker is {health?.worker.status}. Jobs persist and will resume when the worker is
               started or recovered. An unclean lock may take up to two minutes to expire.
             </div>

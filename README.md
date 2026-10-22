@@ -1,8 +1,8 @@
 # AI Scene Composer PoC
 
-Local single-user Next.js application for scene upload/sample, version history and, in later phases, object-aware editing. The delivery contract is [AI_SCENE_COMPOSER_POC_PLAN.md](./AI_SCENE_COMPOSER_POC_PLAN.md).
+Local single-user Next.js application for scene upload/sample, object-aware editing, version history, comparison and evaluation. The delivery contract is [AI_SCENE_COMPOSER_POC_PLAN.md](./AI_SCENE_COMPOSER_POC_PLAN.md).
 
-Current implementation: **Phase 5 comparison, metering and evaluation**. Upload, bundled sample, project/version read-back, health, worker foundation, deterministic mock adapters, preset/custom generation, source-bound SAM selection, single-model and side-by-side editing, frozen-input comparison, project costs, manual evaluation and the five-case evaluation fixture are implemented. A paid live comparison using both models is still required for full live completion.
+Current implementation: **offline Phase 5 and Phase 6 complete; live evidence blocked/partial**. Upload, bundled sample, project/version read-back, health, worker foundation, deterministic mock adapters, preset/custom generation, source-bound SAM selection, single-model and side-by-side editing, frozen-input comparison, project costs, manual evaluation and the five-case evaluation fixture are implemented. A paid live OpenRouter comparison using both models is still required for full live completion.
 
 ## Requirements
 
@@ -13,11 +13,15 @@ Current implementation: **Phase 5 comparison, metering and evaluation**. Upload,
 ## Setup
 
 ```bash
+nvm use                  # if nvm is installed; selects Node 24 from .nvmrc
 npm ci
 cp .env.example .env.local
 npm run fixtures:prepare
 npm run db:migrate
+npx playwright install chromium
 ```
+
+`npm ci` installs only the locked dependency tree; no global CLI or manual SQL is required. `fixtures:prepare` generates the synthetic PNGs, `db:migrate` applies the committed Drizzle migrations, and the Playwright browser install is only needed for browser tests. If npm 11 warns that install scripts were not run and a native module fails to load, run `npm rebuild better-sqlite3` (and `npm rebuild esbuild` if needed).
 
 Run the app and worker in two terminals:
 
@@ -35,6 +39,36 @@ Open `http://127.0.0.1:3000`. The worker prints `SCENE_WORKER_READY` after acqui
 - `AI_MODE=live`, `SAM_MODE=live`: real OpenRouter and Meta; both keys/accounts required.
 
 `SAM_MODE` has no effect in mock mode. Missing live credentials disable only the affected function; they do not enable mock fallback automatically.
+
+## Provider prerequisites and privacy
+
+Live mode requires separate provider accounts and budget; mock mode requires neither.
+
+| Provider | Used for | Required value | Data sent |
+|---|---|---|---|
+| OpenRouter | Generation, edit and comparison | `OPENROUTER_API_KEY` with access to Flare and Sunburst | Prompt; edit/comparison also send the source image and up to two ordered reference images |
+| Meta | Live SAM selection | `META_MODEL_API_KEY` with access to hosted SAM 3.1 | Source image and positive/negative point prompts |
+
+- Keys are read server-side from `.env.local` and are never placed in `NEXT_PUBLIC_` variables, browser configuration, read DTOs or logs. Do not commit `.env.local`.
+- Live provider requests leave the local machine. Use only nonpersonal or properly licensed images, review the provider terms for retention/training behavior, and do not send sensitive material without approval.
+- The app is a local single-user PoC: it binds to loopback, has no authentication and must not be exposed to a network. Private assets live under `assets-local/`, not `/public`.
+- A failed or ambiguous provider call is recorded honestly; there is no automatic mock fallback and no automatic paid replay.
+
+## Architecture constraints
+
+- Node.js 24, Next.js App Router, React, strict TypeScript, Tailwind, SQLite/Drizzle, one local worker and private filesystem assets.
+- One root Version per project; Versions, Selections and assets are immutable. A child Version is created by an explicit edit and becomes active only through Continue or a history click.
+- Exactly three generation presets or one custom prompt, exactly two edit models, no extra providers, no native remote masks, no prompt-rewriting LLM and no external queue/database.
+- Canonical editable images are opaque 1024 x 1024 sRGB PNGs. Raw provider output, canonical/normalized output and the final composited image remain distinct private assets.
+- The worker is single-concurrency and uses a lock; provider calls happen outside SQL transactions. One Run invokes its provider at most once. Missing cost is never treated as zero.
+- Read DTOs are allowlisted and exclude asset paths, provider receipts, input snapshots, raw usage and full prompts. `GET /api/runs/:id` exposes the frozen request only on demand.
+- The local production path is `npm run build` + `npm run start` + `npm run worker`; serverless deployment is not supported.
+
+## Normalization and masks
+
+- `normalization-v1`: base scenes normalize to an opaque 1024 x 1024 sRGB PNG with `#F0F0F0` contain-padding. References preserve aspect ratio without padding or enlargement. Provider square outputs in 512-4096 normalize to 1024 with fill.
+- `mask-pipeline-v1`: the SAM crop is pasted at its half-open box origin into a full-frame binary mask. Padding 16/32 is a square dilation of the object mask; the 8 px inward feather uses `round(255 * valid erode count / 8)`. Bounding boxes and one-decimal percentages are persisted for the prompt.
+- `composite-v1`: `A=0` copies source RGB, `A=255` copies generated RGB, and intermediate alpha uses `round((A*G + (255-A)*S)/255)`. Every protected pixel (`E=0`) must remain byte-equal to the parent; final background MAE and mismatch count must be zero.
 
 ## Fixture slots
 
@@ -78,8 +112,8 @@ npm test                 # Vitest unit and integration tests
 npm run typecheck        # strict TypeScript
 npm run lint             # ESLint
 npm run build            # production build
-npm run test:e2e         # Playwright mock generation, SAM selection, editing and comparison
-npm run test:live        # guarded opt-in live smoke (later phases)
+npm run test:e2e         # Playwright mock generation, SAM selection, editing, comparison and mobile/a11y
+npm run test:live        # guard only; makes no provider calls, live evidence is blocked/partial
 RESET_LOCAL_DATA=1 npm run data:reset
 ```
 
@@ -158,9 +192,51 @@ Definitions live in `src/test/fixtures/evaluation/cases.json`. Every executed ca
 
 The offline mock gate is fully exercisable without credentials. Full live completion still requires one paid comparison using both models on identical frozen reference-driven input.
 
+## Testing
+
+The default suite is offline and zero-cost: `AI_MODE=mock`, `SAM_MODE=fixture` and blank provider keys. Tests use fresh temporary SQLite databases and asset directories plus the committed migrations.
+
+| Command | Coverage |
+|---|---|
+| `npm test` | Unit and integration tests, including provider contracts, exact mask/composite math, retries, idempotency, worker recovery, comparison atomicity, cost partitions, evaluation validation, secret/path leaks and repository hygiene |
+| `npm run test:e2e` | Mock generation, SAM selection, editing, comparison/evaluation, mobile layout and basic accessibility |
+| `npm run typecheck` | Strict TypeScript |
+| `npm run lint` | ESLint |
+| `npm run build` | Production build |
+| `npm run check:contracts` | Offline provider/config drift check; no network, keys or paid probes |
+| `npm run db:generate` | Should report no schema drift when migrations are current |
+
+Current baseline: 32 Vitest files / 178 offline tests and 12 Playwright mock tests. Known npm audit/eslint deprecation warnings and the no-forced-upgrade policy are recorded in the fresh-install record. The detailed acceptance mapping is in [docs/test-matrix.md](docs/test-matrix.md), the fresh-install record is in [docs/setup-verification.md](docs/setup-verification.md), and live evidence is in [docs/live-evidence.md](docs/live-evidence.md); mock results never count as live evidence.
+
+## Demo walkthrough (mock, no keys)
+
+1. Run the setup commands above, then start `npm run dev` and `npm run worker` in two terminals and open `http://127.0.0.1:3000`.
+2. Create a project with **New Scene** and choose **Use Bundled Sample**. The synthetic living-room becomes the immutable root.
+3. Click the sofa on the scene canvas, switch padding 16/32, and add a negative point to see a new source-bound Selection. Padding changes reuse stored variants and do not call SAM again.
+4. In Edit, set the target label and instruction, optionally upload `src/test/fixtures/synthetic/reference-sofa-v1.png` as a reference, select **Flare** or **Sunburst**, confirm the cost, and run the edit. Inspect raw/final output, the exact-parent slider, diagnostics, the evaluation form and **Inspect Request**.
+5. With the same Selection, choose **Compare Both**. Wait for both candidates, then inspect the side-by-side final images, raw/final toggle, shared SAM cost once, per-model/combined candidate cost, attempt history, request details and the optional before/after overlay. Save a manual evaluation.
+6. Choose **Continue from Flare** (or Sunburst) and confirm only that candidate's final Version becomes active. Reload the page and verify the comparison, evaluation and costs are rehydrated.
+7. Use a second project to demonstrate the Generate tab: one preset and one custom prompt, then inspect the queued/failed/retry states and the project costs panel.
+8. Stop the web and worker processes before any reset. The five-case table remains `not_run` until real live comparisons are recorded.
+
+## Live evidence and remaining gates
+
+- Live Meta SAM was manually verified on 2026-10-22 with explicit authorization: two paid calls, approximately USD 0.005 total; the first correctly failed `INVALID_SELECTION` and the second succeeded with a 2,500 micro-USD calculated charge. Exact details are in [docs/live-evidence.md](docs/live-evidence.md).
+- Live OpenRouter generation/edit and a paid Flare/Sunburst comparison have **not** been run. There is no observed live OpenRouter latency, output quality or provider-reported cost.
+- The five-case evaluation table remains `not_run`. Full live Definition of Done is **blocked/partial** pending explicit spend approval, confirmed access to both image models, licensed reference photos/permission records, a live SAM selection on an AI-generated scene, and a documented call budget.
+- `npm run test:live` is a guard only and makes no provider calls.
+
+## Licensing
+
+- This repository does not include a code license file; treat the code as private/unlicensed until the owner adds one. Do not redistribute it without permission.
+- Synthetic fixture PNGs are generated by this project from project-authored SVG primitives. Optional owner-supplied photographs require a matching permission record under `src/test/fixtures/licenses/`; personal photographs and raw live captures must not be committed.
+- Provider outputs and third-party marks remain subject to the applicable provider terms. Review those terms before publishing generated images or comparison evidence.
+
 ## Storage and safety
 
-- SQLite: `./data/scene-composer.sqlite`
-- Private assets: `./assets-local/`
-- Provider keys and storage paths remain server-side; they are never exposed through read DTOs or logs.
-- `agent-memory/`, `.env.local`, local data, local assets and build/test artifacts are gitignored.
+- SQLite: `./data/scene-composer.sqlite`; private assets: `./assets-local/`; migrations: `./drizzle/`.
+- The app is a local, loopback-only, single-user PoC. It has no authentication and must not be exposed to a network or the public internet.
+- Provider keys and storage paths remain server-side; they are never exposed through read DTOs, browser configuration or logs. Do not use `NEXT_PUBLIC_` for secrets or paths.
+- `agent-memory/`, `.env.local`, local data, local assets and build/test artifacts are gitignored. Do not force-add them.
+- **Guarded reset:** stop the web app and worker first, then run `RESET_LOCAL_DATA=1 npm run data:reset`. The script refuses repository/filesystem roots, symlinked targets and custom storage paths outside the dedicated `data/` and `assets-local/` directories; it deletes only the known SQLite database (including WAL/SHM) and validated asset directory, then reapplies committed migrations. Never run `rm -rf` against an environment-selected path.
+- The default tests never touch `data/` or `assets-local/`; they use isolated temporary databases and asset directories.
