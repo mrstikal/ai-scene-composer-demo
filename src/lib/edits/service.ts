@@ -16,9 +16,12 @@ import {
   IMAGE_TRANSPORT_OPTIONS,
   MASK_FEATHER_PX,
   MASK_PIPELINE_VERSION,
+  SCENE_EDIT_PROMPT_VERSION,
   editSnapshotSchema,
+  isSelectionEditSnapshot,
   regionsSchema,
   type EditModel,
+  type EditScope,
   type EditSnapshot,
   type RegionVariant,
 } from "../contracts/domain";
@@ -43,7 +46,7 @@ import {
 } from "../idempotency/service";
 import { assertReservationAllowed } from "../budget/service";
 import { buildEditCommonInputHash } from "./common-input";
-import { buildEditPrompt } from "./prompt";
+import { buildEditPrompt, buildSceneEditPrompt } from "./prompt";
 import { getProjectOrThrow } from "../projects/service";
 
 export type EditExecutionMode = "mock" | "live";
@@ -64,10 +67,12 @@ function requireEditModel(model: string): EditModel {
 }
 
 export function normalizeEditText(input: {
-  targetLabel: string | undefined;
+  scope: EditScope;
+  targetLabel?: string | undefined;
   instruction: string;
 }): { targetLabel: string; instruction: string } {
-  const targetLabel = (input.targetLabel ?? "selected object").trim();
+  const targetLabel =
+    input.scope === "scene" ? "whole scene" : (input.targetLabel ?? "selected object").trim();
   const instruction = input.instruction.trim();
   if (targetLabel.length === 0 || targetLabel.length > 80) {
     throw new AppError(400, "INVALID_REQUEST", "Target label must contain 1-80 characters.");
@@ -173,20 +178,22 @@ export function assertEditInputsAvailable(
   snapshot: EditSnapshot,
 ): void {
   getVersionAsset(db, projectId, snapshot.parentVersionId);
-  const selection = db
-    .select()
-    .from(selections)
-    .where(and(eq(selections.id, snapshot.selectionId), eq(selections.projectId, projectId)))
-    .get();
-  if (selection === undefined) {
-    throw new AppError(404, "NOT_FOUND", "Selection was not found in this project.");
+  if (isSelectionEditSnapshot(snapshot)) {
+    const selection = db
+      .select()
+      .from(selections)
+      .where(and(eq(selections.id, snapshot.selectionId), eq(selections.projectId, projectId)))
+      .get();
+    if (selection === undefined) {
+      throw new AppError(404, "NOT_FOUND", "Selection was not found in this project.");
+    }
+    if (selection.sourceVersionId !== snapshot.parentVersionId) {
+      throw new AppError(409, "STALE_SELECTION", "The selection belongs to a different source version.");
+    }
+    getMaskAsset(db, projectId, snapshot.binaryMaskAssetId, "selection_mask", snapshot.binaryMaskSha256);
+    getMaskAsset(db, projectId, snapshot.allowedMaskAssetId, "allowed_mask", snapshot.allowedMaskSha256);
+    getMaskAsset(db, projectId, snapshot.blendMaskAssetId, "blend_mask", snapshot.blendMaskSha256);
   }
-  if (selection.sourceVersionId !== snapshot.parentVersionId) {
-    throw new AppError(409, "STALE_SELECTION", "The selection belongs to a different source version.");
-  }
-  getMaskAsset(db, projectId, snapshot.binaryMaskAssetId, "selection_mask", snapshot.binaryMaskSha256);
-  getMaskAsset(db, projectId, snapshot.allowedMaskAssetId, "allowed_mask", snapshot.allowedMaskSha256);
-  getMaskAsset(db, projectId, snapshot.blendMaskAssetId, "blend_mask", snapshot.blendMaskSha256);
   const references = getReferenceAssets(db, projectId, snapshot.referenceAssetIds);
   references.forEach((asset, index) => {
     if (asset.sha256 !== snapshot.referenceSha256[index]) {
@@ -280,13 +287,54 @@ export function buildEditSnapshotForModel(input: {
   return { snapshot, commonInputHash: buildEditCommonInputHash(snapshot) };
 }
 
+function buildSceneEditSnapshot(input: {
+  env: AppEnv;
+  parentVersionId: string;
+  parentAsset: AssetRow;
+  instruction: string;
+  referenceAssets: AssetRow[];
+  model: EditModel;
+  reservationUsdMicros: number;
+  pricingVersion: string;
+  capabilityVersion: string;
+}): { snapshot: EditSnapshot; commonInputHash: string } {
+  const prompt = buildSceneEditPrompt({
+    instruction: input.instruction,
+    referenceCount: input.referenceAssets.length,
+  });
+  const snapshot = editSnapshotSchema.parse({
+    operation: "edit",
+    scope: "scene",
+    parentVersionId: input.parentVersionId,
+    sourceAssetId: input.parentAsset.id,
+    sourceSha256: input.parentAsset.sha256,
+    sourceWidth: input.parentAsset.width,
+    sourceHeight: input.parentAsset.height,
+    instruction: input.instruction,
+    prompt,
+    promptSha256: sha256Hex(Buffer.from(prompt, "utf8")),
+    promptVersion: SCENE_EDIT_PROMPT_VERSION,
+    model: input.model,
+    referenceAssetIds: input.referenceAssets.map((asset) => asset.id),
+    referenceSha256: input.referenceAssets.map((asset) => asset.sha256),
+    executionMode: editExecutionMode(input.env),
+    normalizationVersion: "normalization-v1",
+    pricingVersion: input.pricingVersion,
+    capabilityVersion: input.capabilityVersion,
+    reservationUsdMicros: input.reservationUsdMicros,
+    transportOptions: IMAGE_TRANSPORT_OPTIONS,
+  });
+  return { snapshot, commonInputHash: buildEditCommonInputHash(snapshot) };
+}
+
 export function prepareEditSnapshot(input: {
   db: AppDatabase;
   env: AppEnv;
   projectId: string;
   parentVersionId: string;
-  selectionId: string;
-  paddingPx: 16 | 32;
+  scope: EditScope;
+  selectionId?: string;
+  paddingPx?: 16 | 32;
   targetLabel: string;
   instruction: string;
   referenceAssetIds: readonly string[];
@@ -294,8 +342,31 @@ export function prepareEditSnapshot(input: {
   reservationUsdMicros: number;
   pricingVersion: string;
   capabilityVersion: string;
-}): { snapshot: EditSnapshot; commonInputHash: string; selection: SelectionRow } {
+}): { snapshot: EditSnapshot; commonInputHash: string; selection: SelectionRow | null } {
   const parentAsset = getVersionAsset(input.db, input.projectId, input.parentVersionId);
+  const referenceAssets = getReferenceAssets(input.db, input.projectId, input.referenceAssetIds);
+
+  if (input.scope === "scene") {
+    return {
+      ...buildSceneEditSnapshot({
+        env: input.env,
+        parentVersionId: input.parentVersionId,
+        parentAsset,
+        instruction: input.instruction,
+        referenceAssets,
+        model: input.model,
+        reservationUsdMicros: input.reservationUsdMicros,
+        pricingVersion: input.pricingVersion,
+        capabilityVersion: input.capabilityVersion,
+      }),
+      selection: null,
+    };
+  }
+
+  if (input.selectionId === undefined || input.paddingPx === undefined) {
+    throw new AppError(400, "INVALID_REQUEST", "A selection edit requires a selection and padding.");
+  }
+
   const selection = input.db
     .select()
     .from(selections)
@@ -317,7 +388,6 @@ export function prepareEditSnapshot(input: {
     throw new AppError(422, "INVALID_SELECTION", "The selected padding variant is missing.");
   }
 
-  const referenceAssets = getReferenceAssets(input.db, input.projectId, input.referenceAssetIds);
   const built = buildEditSnapshotForModel({
     db: input.db,
     env: input.env,
@@ -344,9 +414,10 @@ export async function enqueueEdit(input: {
   env: AppEnv;
   projectId: string;
   parentVersionId: string;
-  selectionId: string;
-  paddingPx: 16 | 32;
-  targetLabel: string | undefined;
+  scope: EditScope;
+  selectionId?: string;
+  paddingPx?: 16 | 32;
+  targetLabel?: string | undefined;
   instruction: string;
   referenceAssetIds: string[];
   model: string;
@@ -356,11 +427,16 @@ export async function enqueueEdit(input: {
   const { handle, env, projectId, idempotencyKey } = input;
   const { db, sqlite } = handle;
   const model = requireEditModel(input.model);
-  const text = normalizeEditText({ targetLabel: input.targetLabel, instruction: input.instruction });
+  const text = normalizeEditText({
+    scope: input.scope,
+    targetLabel: input.targetLabel,
+    instruction: input.instruction,
+  });
   const requestHash = hashRequest({
     operation: "edit",
     projectId,
     parentVersionId: input.parentVersionId,
+    scope: input.scope,
     selectionId: input.selectionId,
     paddingPx: input.paddingPx,
     targetLabel: text.targetLabel,
@@ -411,6 +487,7 @@ export async function enqueueEdit(input: {
         env,
         projectId,
         parentVersionId: input.parentVersionId,
+        scope: input.scope,
         selectionId: input.selectionId,
         paddingPx: input.paddingPx,
         targetLabel: text.targetLabel,
@@ -433,7 +510,7 @@ export async function enqueueEdit(input: {
           comparisonGroupId: null,
           retryOfRunId: null,
           parentVersionId: input.parentVersionId,
-          inputSelectionId: built.selection.id,
+          inputSelectionId: built.selection?.id ?? null,
           model,
           inputSnapshotJson: built.snapshot,
           commonInputHash: built.commonInputHash,

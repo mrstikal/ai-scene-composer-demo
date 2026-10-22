@@ -14,6 +14,11 @@ interface DisplayRect {
   height: number;
 }
 
+export interface CanvasSelectionModifiers {
+  additive: boolean;
+  subtractive: boolean;
+}
+
 export function SceneCanvas(input: {
   imageAssetId: string;
   alt: string;
@@ -23,9 +28,9 @@ export function SceneCanvas(input: {
   maskOpacity: number;
   allowedVisible: boolean;
   disabled: boolean;
-  positivePoint: Point | null;
-  negativePoint: Point | null;
-  onSelect: (point: Point) => void;
+  positivePoints: Point[];
+  negativePoints: Point[];
+  onSelect: (point: Point, modifiers: CanvasSelectionModifiers) => void;
 }) {
   const frameRef = useRef<HTMLDivElement | null>(null);
   const canceledRef = useRef(false);
@@ -74,8 +79,16 @@ export function SceneCanvas(input: {
       clientX: native.clientX,
       clientY: native.clientY,
     });
-    if (point !== null) input.onSelect(point);
+    if (point !== null) {
+      input.onSelect(point, {
+        additive: native.shiftKey,
+        subtractive: native.altKey,
+      });
+    }
   }
+
+  const markers = (points: readonly Point[], tone: string, prefix: string) =>
+    points.map((point, index) => marker(point, tone, `${prefix} ${index + 1}`));
 
   const marker = (point: Point | null, tone: string, label: string) => {
     if (point === null || displayRect === null) return null;
@@ -94,6 +107,16 @@ export function SceneCanvas(input: {
 
   return (
     <div className="mt-4 rounded-lg border border-stone-200 bg-stone-100 p-2">
+      <div className="mb-2 flex justify-end">
+        <a
+          href={`/api/assets/${input.imageAssetId}`}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs underline decoration-stone-400 underline-offset-2"
+        >
+          Open scene full resolution
+        </a>
+      </div>
       <div className="relative mx-auto aspect-square max-h-[70vh] w-full overflow-hidden rounded-md bg-stone-200">
         <div
           ref={frameRef}
@@ -132,12 +155,13 @@ export function SceneCanvas(input: {
             visible={input.allowedVisible && input.allowedMaskAssetId !== null}
             label="allowed-region"
           />
-          {marker(input.positivePoint, "bg-emerald-500", "Positive point")}
-          {marker(input.negativePoint, "bg-red-500", "Negative point")}
+          {markers(input.positivePoints, "bg-emerald-500", "Positive point")}
+          {markers(input.negativePoints, "bg-red-500", "Negative point")}
         </div>
       </div>
       <p className="mt-2 text-center text-xs text-stone-500">
-        Click inside the image to place a point. The canvas is disabled while a selection runs.
+        Click replaces the selection. Shift-click adds a positive point; Alt/Option-click subtracts a
+        negative point. Up to 8 points per label; every click runs SAM.
       </p>
     </div>
   );

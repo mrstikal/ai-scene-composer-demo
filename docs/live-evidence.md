@@ -88,3 +88,7 @@ Only the fixed **Recolor sofa** case has been executed live. The other four rema
 - `src/test/fixtures/licenses/` — CC0 permission records for the source and reference photographs.
 
 Do not commit API keys, absolute storage paths, provider request bodies or private image bytes.
+
+## Post-DoD Changes (Not Live-Verified)
+
+The multi-point SAM selection, whole-scene edit/comparison, responsive comparison layout and full-resolution image links were added after the live DoD. They are covered by mock/fixture integration and Playwright tests only. No paid SAM or OpenRouter calls were made for these changes, so they are **not** live evidence. Details and limits are in [Selection and Edit Modes](selection-and-edit-modes.md).

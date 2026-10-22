@@ -47,7 +47,7 @@ Machine-readable snapshots:
 ### Frozen request policy
 
 - Initial generation uses Flare only, with `input_references` omitted entirely.
-- Editing uses the selected model with the canonical source image first and zero, one or two ordered user references afterward. The total is one to three images.
+- Editing uses the selected model with the canonical source image first and zero, one or two ordered user references afterward. The total is one to three images. The app supports two scopes: a selection edit that composites through a local mask, and a whole-scene edit that accepts the complete generated frame with no protected-pixel guarantee. The model call itself is identical; no mask is sent to the provider.
 - Both operations send the same fixed fields: `aspect_ratio: "1:1"`, `quality: "medium"`, `background: "opaque"`, `n: 1`, and `provider: { only: ["openai"], allow_fallbacks: false }`.
 - Do not send `mask`, `size`, `resolution`, `output_format`, `seed` or `stream`. Do not add a prompt rewriter, provider fallback, extra image model or extra image provider.
 - `output_compression` is advertised but intentionally unused.
@@ -80,7 +80,7 @@ Machine-readable snapshots:
 
 - Build the prompt with `buildObjectPrompt`, not hand-written token grammar.
 - Send one user message with `input_text` and an `input_image` data URL containing the canonical 1024 x 1024 PNG.
-- Use exactly one positive point and zero or one negative point, all in canonical pixel coordinates. Object ID is `1`.
+- Use one to eight positive points and zero to eight negative points, all in canonical pixel coordinates. Object ID is `1`. The UI maps Shift-click to adding a positive point and Alt/Option-click to subtracting a negative point; a plain click replaces the selection.
 - Set `stream: true` and `metadata: { mask_encoding: "one_bit" }`. Box/point prompts return `one_bit` masks regardless of the requested encoding; read the wire marker rather than assuming.
 - Require a completed stream outcome and zero error-level parser diagnostics. EOF without `response.completed` is not success.
 - Preserve the terminal response's request ID and usage through a pass-through event observer if available. Consume the stream once; do not iterate it twice.

@@ -17,8 +17,8 @@ export function SelectionPanel(input: {
   latestRun: RunSummaryDto | null;
   mode: "positive" | "negative";
   onModeChange: (mode: "positive" | "negative") => void;
-  positivePoint: Point | null;
-  negativePoint: Point | null;
+  positivePoints: Point[];
+  negativePoints: Point[];
   paddingPx: MaskPaddingPx;
   onPaddingChange: (padding: MaskPaddingPx) => void;
   maskVisible: boolean;
@@ -48,8 +48,9 @@ export function SelectionPanel(input: {
     input.selection === null
       ? null
       : input.selection.regions.variants[String(input.paddingPx) as "16" | "32"];
-  const positivePoint = input.positivePoint ?? input.selection?.positivePoints[0] ?? null;
-  const negativePoint = input.negativePoint ?? input.selection?.negativePoints[0] ?? null;
+  const positivePoints = input.positivePoints;
+  const negativePoints = input.negativePoints;
+  const positivePoint = positivePoints[0] ?? null;
   const pending = input.pendingRun !== null || input.submitting;
   const failed =
     input.latestRun !== null &&
@@ -108,20 +109,28 @@ export function SelectionPanel(input: {
 
       <p className="mt-2 text-xs text-stone-500">
         {input.mode === "negative"
-          ? "Click the object part to exclude. The positive and negative points are sent together."
-          : "Click the object to select it. A new positive click replaces the current selection."}
+          ? "Click or Alt/Option-click the object part to exclude. All positive and negative points are sent together."
+          : "Click replaces the selection with one positive point. Shift-click adds a positive point; Alt/Option-click subtracts a negative point. Up to 8 points per label; every click runs SAM."}
       </p>
 
-      {positivePoint !== null ? (
+      {positivePoints.length > 0 || negativePoints.length > 0 ? (
         <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-600">
-          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-900">
-            + {pointLabel(positivePoint)}
-          </span>
-          {negativePoint !== null ? (
-            <span className="rounded-full bg-red-100 px-2 py-0.5 text-red-900">
-              − {pointLabel(negativePoint)}
+          {positivePoints.map((point, index) => (
+            <span
+              key={`positive-${point.x}-${point.y}-${index}`}
+              className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-900"
+            >
+              + {pointLabel(point)}
             </span>
-          ) : null}
+          ))}
+          {negativePoints.map((point, index) => (
+            <span
+              key={`negative-${point.x}-${point.y}-${index}`}
+              className="rounded-full bg-red-100 px-2 py-0.5 text-red-900"
+            >
+              − {pointLabel(point)}
+            </span>
+          ))}
         </div>
       ) : null}
 
@@ -179,9 +188,9 @@ export function SelectionPanel(input: {
             <option value="">Latest selection</option>
             {input.selections.map((selection) => (
               <option key={selection.id} value={selection.id}>
-                {shortId(selection.id)} · +{pointLabel(selection.positivePoints[0])}
+                {shortId(selection.id)} · +{selection.positivePoints.length}
                 {selection.negativePoints.length > 0
-                  ? ` −${pointLabel(selection.negativePoints[0])}`
+                  ? ` −${selection.negativePoints.length}`
                   : ""}
               </option>
             ))}

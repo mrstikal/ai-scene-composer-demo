@@ -20,8 +20,8 @@ export interface SelectionStateInput {
   snapshot: ProjectSnapshotDto | null;
   projectId: string | null;
   selectionMode: "positive" | "negative";
-  positivePoint: Point | null;
-  negativePoint: Point | null;
+  positivePoints: Point[];
+  negativePoints: Point[];
   selectedSelectionId: string | null;
   selectionUiVersionId: string | null;
   pendingSelection: (PendingSelectionRequest & { runId: string }) | null;
@@ -35,8 +35,8 @@ export function useSelectionState(input: SelectionStateInput) {
     snapshot,
     projectId,
     selectionMode,
-    positivePoint,
-    negativePoint,
+    positivePoints,
+    negativePoints,
     selectedSelectionId,
     selectionUiVersionId,
     pendingSelection,
@@ -53,8 +53,8 @@ export function useSelectionState(input: SelectionStateInput) {
 
     const selectionStateMatches = selectionUiVersionId === activeVersionId;
     const effectiveSelectionMode = selectionStateMatches ? selectionMode : "positive";
-    const effectivePositivePoint = selectionStateMatches ? positivePoint : null;
-    const effectiveNegativePoint = selectionStateMatches ? negativePoint : null;
+    const effectivePositivePoints = selectionStateMatches ? positivePoints : [];
+    const effectiveNegativePoints = selectionStateMatches ? negativePoints : [];
 
     const selectionsForActive =
       activeVersionId === null
@@ -129,10 +129,13 @@ export function useSelectionState(input: SelectionStateInput) {
       !pendingRunTerminal;
     const selectionPending = submittingThisView || pendingSegmentRun !== null;
     const displaySelection = selectionPending ? null : activeSelection;
-    const displayPositivePoint =
-      effectivePositivePoint ?? displaySelection?.positivePoints[0] ?? null;
-    const displayNegativePoint =
-      effectiveNegativePoint ?? displaySelection?.negativePoints[0] ?? null;
+    const draftActive = effectivePositivePoints.length > 0 || effectiveNegativePoints.length > 0;
+    const displayPositivePoints = draftActive
+      ? effectivePositivePoints
+      : displaySelection?.positivePoints ?? [];
+    const displayNegativePoints = draftActive
+      ? effectiveNegativePoints
+      : displaySelection?.negativePoints ?? [];
     const activeVariant =
       displaySelection === null
         ? null
@@ -143,8 +146,8 @@ export function useSelectionState(input: SelectionStateInput) {
       activeVersionId,
       activeProvenance,
       effectiveSelectionMode,
-      effectivePositivePoint,
-      effectiveNegativePoint,
+      effectivePositivePoints,
+      effectiveNegativePoints,
       selectionsForActive,
       latestSelection,
       segmentRunsForActive,
@@ -161,16 +164,16 @@ export function useSelectionState(input: SelectionStateInput) {
       submittingThisView,
       selectionPending,
       displaySelection,
-      displayPositivePoint,
-      displayNegativePoint,
+      displayPositivePoints,
+      displayNegativePoints,
       activeVariant,
     };
   }, [
     snapshot,
     projectId,
     selectionMode,
-    positivePoint,
-    negativePoint,
+    positivePoints,
+    negativePoints,
     selectedSelectionId,
     selectionUiVersionId,
     pendingSelection,

@@ -12,6 +12,7 @@ import {
 } from "../config/pricing";
 import type { CostConsent, SegmentationResponse } from "../contracts/api";
 import {
+  SAM_MAX_POINTS_PER_LABEL,
   SAM_MODEL,
   SAM_PARSER_VERSION,
   SAM_PROMPT_VERSION,
@@ -57,37 +58,64 @@ export function segmentationCalculatedCostUsdMicros(env: AppEnv): number {
 export function validateSegmentationPoints(input: {
   positivePoints: readonly Point[];
   negativePoints: readonly Point[];
-}): { positive: Point; negative: Point | null } {
-  if (input.positivePoints.length !== 1) {
-    throw new AppError(400, "INVALID_POINT", "Exactly one positive point is required.");
+}): { positivePoints: Point[]; negativePoints: Point[] } {
+  if (input.positivePoints.length < 1) {
+    throw new AppError(400, "INVALID_POINT", "At least one positive point is required.");
   }
-  if (input.negativePoints.length > 1) {
-    throw new AppError(400, "INVALID_POINT", "At most one negative point is allowed.");
+  if (input.positivePoints.length > SAM_MAX_POINTS_PER_LABEL) {
+    throw new AppError(
+      400,
+      "INVALID_POINT",
+      `At most ${SAM_MAX_POINTS_PER_LABEL} positive points are allowed.`,
+    );
+  }
+  if (input.negativePoints.length > SAM_MAX_POINTS_PER_LABEL) {
+    throw new AppError(
+      400,
+      "INVALID_POINT",
+      `At most ${SAM_MAX_POINTS_PER_LABEL} negative points are allowed.`,
+    );
   }
 
-  const positive = input.positivePoints[0];
-  if (positive === undefined) {
-    throw new AppError(400, "INVALID_POINT", "A positive point is required.");
-  }
-  const negative = input.negativePoints[0] ?? null;
+  const positivePoints: Point[] = [];
+  const negativePoints: Point[] = [];
+  const seen = new Set<string>();
 
-  for (const point of [positive, ...(negative === null ? [] : [negative])]) {
-    if (
-      !Number.isInteger(point.x) ||
-      !Number.isInteger(point.y) ||
-      point.x < 0 ||
-      point.y < 0 ||
-      point.x >= 1024 ||
-      point.y >= 1024
-    ) {
-      throw new AppError(400, "INVALID_POINT", "Points must be integer pixels inside the canonical image.");
+  for (const [label, points, target] of [
+    ["positive", input.positivePoints, positivePoints],
+    ["negative", input.negativePoints, negativePoints],
+  ] as const) {
+    for (const point of points) {
+      if (
+        !Number.isInteger(point.x) ||
+        !Number.isInteger(point.y) ||
+        point.x < 0 ||
+        point.y < 0 ||
+        point.x >= 1024 ||
+        point.y >= 1024
+      ) {
+        throw new AppError(
+          400,
+          "INVALID_POINT",
+          "Points must be integer pixels inside the canonical image.",
+        );
+      }
+      const key = `${point.x},${point.y}`;
+      if (seen.has(key)) {
+        throw new AppError(
+          400,
+          "INVALID_POINT",
+          label === "negative" && positivePoints.some((value) => value.x === point.x && value.y === point.y)
+            ? "Positive and negative points must differ."
+            : "Points must be unique.",
+        );
+      }
+      seen.add(key);
+      target.push({ x: point.x, y: point.y });
     }
   }
 
-  if (negative !== null && negative.x === positive.x && negative.y === positive.y) {
-    throw new AppError(400, "INVALID_POINT", "Positive and negative points must differ.");
-  }
-  return { positive, negative };
+  return { positivePoints, negativePoints };
 }
 
 function getSourceVersion(input: {
@@ -118,8 +146,8 @@ function getSourceVersion(input: {
 function buildSegmentSnapshot(input: {
   env: AppEnv;
   source: { version: VersionRow; asset: AssetRow };
-  positive: Point;
-  negative: Point | null;
+  positivePoints: readonly Point[];
+  negativePoints: readonly Point[];
   reservationUsdMicros: number;
   capture: SegmentSnapshot["capture"];
 }): SegmentSnapshot {
@@ -128,8 +156,8 @@ function buildSegmentSnapshot(input: {
   const prompt = buildSamPrompt({
     width: input.source.asset.width,
     height: input.source.asset.height,
-    positive: input.positive,
-    negative: input.negative,
+    positivePoints: input.positivePoints,
+    negativePoints: input.negativePoints,
   });
 
   return segmentSnapshotSchema.parse({
@@ -139,8 +167,8 @@ function buildSegmentSnapshot(input: {
     sourceSha256: input.source.asset.sha256,
     width: input.source.asset.width,
     height: input.source.asset.height,
-    positivePoints: [input.positive],
-    negativePoints: input.negative === null ? [] : [input.negative],
+    positivePoints: input.positivePoints,
+    negativePoints: input.negativePoints,
     prompt,
     promptSha256: sha256Hex(Buffer.from(prompt, "utf8")),
     promptVersion: SAM_PROMPT_VERSION,
@@ -188,8 +216,8 @@ export async function enqueueSegmentation(input: {
     operation,
     projectId,
     sourceVersionId,
-    positivePoints: [points.positive],
-    negativePoints: points.negative === null ? [] : [points.negative],
+    positivePoints: points.positivePoints,
+    negativePoints: points.negativePoints,
     costConsent,
   });
   const replay = replayIdempotent(findIdempotency(db, projectId, idempotencyKey), operation, requestHash);
@@ -233,8 +261,8 @@ export async function enqueueSegmentation(input: {
   const snapshot = buildSegmentSnapshot({
     env,
     source,
-    positive: points.positive,
-    negative: points.negative,
+    positivePoints: points.positivePoints,
+    negativePoints: points.negativePoints,
     reservationUsdMicros,
     capture,
   });

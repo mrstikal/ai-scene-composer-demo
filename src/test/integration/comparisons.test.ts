@@ -140,6 +140,7 @@ async function enqueueComparisonFor(input: {
     env,
     projectId: input.projectId,
     parentVersionId: input.parentVersionId,
+    scope: "selection",
     selectionId: input.selectionId,
     paddingPx: 16,
     targetLabel: "sofa",
@@ -151,6 +152,47 @@ async function enqueueComparisonFor(input: {
 }
 
 describe("comparison enqueue", () => {
+  it("creates a whole-scene comparison without a selection", async () => {
+    const { projectId, rootVersionId } = await sampleProject();
+    const env = testEnv.env;
+    const stored = await enqueueComparison({
+      handle: testEnv.handle,
+      env,
+      projectId,
+      parentVersionId: rootVersionId,
+      scope: "scene",
+      instruction: "Change the lighting to night.",
+      referenceAssetIds: [],
+      costConsent: consent(comparisonReservationUsdMicros(env)),
+      idempotencyKey: randomUUID(),
+    });
+    const body = stored.body as { comparisonGroupId: string; runIds: [string, string] };
+    expect(stored.status).toBe(202);
+
+    const rows = testEnv.handle.db
+      .select()
+      .from(runs)
+      .where(eq(runs.comparisonGroupId, body.comparisonGroupId))
+      .all();
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.inputSelectionId === null)).toBe(true);
+    const snapshots = rows.map((row) => {
+      const parsed = editSnapshotSchema.safeParse(row.inputSnapshotJson);
+      if (!parsed.success) throw new Error("Comparison snapshot is invalid.");
+      return parsed.data;
+    });
+    expect(snapshots.every((snapshot) => snapshot.scope === "scene")).toBe(true);
+    expect(new Set(rows.map((row) => row.commonInputHash)).size).toBe(1);
+
+    await runEdit();
+    await runEdit();
+
+    const detail = getComparisonDetail(testEnv.handle.db, body.comparisonGroupId, env);
+    expect(detail.sharedSelectionCost).toBeNull();
+    expect(detail.runs.every((run) => run.editInput?.scope === "scene")).toBe(true);
+    expect(detail.runs.every((run) => run.metrics?.scope === "scene")).toBe(true);
+  });
+
   it("creates two sibling runs with frozen shared input and no source chaining", async () => {
     const { projectId, rootVersionId } = await sampleProject();
     const selectionId = await createSelection(projectId, rootVersionId);
@@ -313,6 +355,7 @@ describe("comparison enqueue", () => {
         env,
         projectId,
         parentVersionId: rootVersionId,
+        scope: "selection",
         selectionId,
         paddingPx: 16,
         targetLabel: "sofa",

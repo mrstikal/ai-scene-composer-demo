@@ -162,8 +162,8 @@ function classifyParseError(
 export function buildSamPrompt(input: {
   width: number;
   height: number;
-  positive: Point;
-  negative: Point | null;
+  positivePoints: readonly Point[];
+  negativePoints: readonly Point[];
 }): string {
   return buildObjectPrompt({
     size: { width: input.width, height: input.height },
@@ -173,10 +173,12 @@ export function buildSamPrompt(input: {
         prompts: [
           {
             points: [
-              { x: input.positive.x, y: input.positive.y },
-              ...(input.negative === null
-                ? []
-                : [{ x: input.negative.x, y: input.negative.y, label: "negative" as const }]),
+              ...input.positivePoints.map((point) => ({ x: point.x, y: point.y })),
+              ...input.negativePoints.map((point) => ({
+                x: point.x,
+                y: point.y,
+                label: "negative" as const,
+              })),
             ],
           },
         ],
@@ -190,8 +192,8 @@ export async function parseSamEvents(
   input: {
     width: number;
     height: number;
-    positive: Point;
-    negative: Point | null;
+    positivePoints: readonly Point[];
+    negativePoints: readonly Point[];
     startedAt?: number;
   },
 ): Promise<SegmentationAdapterResult> {
@@ -266,8 +268,8 @@ export async function parseSamEvents(
       records: [record],
       frameWidth: input.width,
       frameHeight: input.height,
-      positive: input.positive,
-      negative: input.negative,
+      positivePoints: input.positivePoints,
+      negativePoints: input.negativePoints,
     });
   } catch (error) {
     return invalidResult(
@@ -376,8 +378,8 @@ export async function callMetaSam(
     const parsed = parseSamEvents(stream, {
       width: input.width,
       height: input.height,
-      positive: input.positive,
-      negative: input.negative,
+      positivePoints: input.positivePoints,
+      negativePoints: input.negativePoints,
       startedAt,
     });
     const deadline = new Promise<SegmentationAdapterResult>((resolve) => {

@@ -63,7 +63,7 @@ async function sampleProject(): Promise<{ projectId: string; rootVersionId: stri
 async function enqueue(
   projectId: string,
   sourceVersionId: string,
-  positive: { x: number; y: number },
+  positive: { x: number; y: number } | { x: number; y: number }[],
   options: {
     negative?: { x: number; y: number }[];
     env?: AppEnv;
@@ -77,7 +77,7 @@ async function enqueue(
     env,
     projectId,
     sourceVersionId,
-    positivePoints: [positive],
+    positivePoints: Array.isArray(positive) ? positive : [positive],
     negativePoints: options.negative ?? [],
     costConsent: consent(
       options.reservation ?? segmentationReservationUsdMicros(env),
@@ -291,6 +291,50 @@ describe("SAM selection enqueue and mock worker", () => {
     expect(detail.input).not.toHaveProperty("records");
   });
 
+  it("supports multiple positive and negative points in one SAM prompt", async () => {
+    const { projectId, rootVersionId } = await sampleProject();
+    const positives = [
+      { x: 420, y: 610 },
+      { x: 520, y: 610 },
+    ];
+    const negatives = [{ x: 470, y: 610 }];
+    const stored = await enqueue(projectId, rootVersionId, positives, { negative: negatives });
+    const runId = (stored.body as { runId: string }).runId;
+
+    await runSegment();
+
+    const snapshot = getProjectSnapshot(testEnv.handle.db, projectId, testEnv.env);
+    const selection = snapshot.selections[0];
+    if (selection === undefined) throw new Error("Selection was not persisted.");
+    expect(selection.positivePoints).toEqual(positives);
+    expect(selection.negativePoints).toEqual(negatives);
+    expect(snapshot.runs.find((run) => run.id === runId)?.segmentInput).toMatchObject({
+      positivePoints: positives,
+      negativePoints: negatives,
+    });
+
+    const detail = getRunDetail(testEnv.handle.db, runId, testEnv.env);
+    if (detail.input === null || detail.input.kind !== "segment") {
+      throw new Error("Expected a segment input.");
+    }
+    expect(detail.input.prompt).toContain("<|point;x=420;y=610;w=1024;h=1024|>");
+    expect(detail.input.prompt).toContain("<|point;x=520;y=610;w=1024;h=1024|>");
+    expect(detail.input.prompt).toContain("-<|point;x=470;y=610;w=1024;h=1024|>");
+
+    const maskRow = testEnv.handle.db
+      .select()
+      .from(assets)
+      .where(eq(assets.id, selection.binaryMaskAssetId))
+      .get();
+    if (maskRow === undefined) throw new Error("Selection mask asset is missing.");
+    const decoded = await decodeMaskPng(
+      await readAssetBytes(testEnv.env.assetDir, maskRow.relativePath),
+    );
+    expect(decoded.mask[610 * 1024 + 420]).toBe(1);
+    expect(decoded.mask[610 * 1024 + 520]).toBe(1);
+    expect(decoded.mask[610 * 1024 + 470]).toBe(0);
+  });
+
   it("creates a new immutable selection for a negative correction without mutating the first", async () => {
     const { projectId, rootVersionId } = await sampleProject();
     const firstStored = await enqueue(projectId, rootVersionId, { x: 420, y: 610 });
@@ -378,20 +422,19 @@ describe("SAM selection enqueue and mock worker", () => {
     ).rejects.toThrow("inside the canonical image");
 
     await expect(
-      enqueueSegmentation({
-        handle: testEnv.handle,
-        env: testEnv.env,
+      enqueue(projectId, rootVersionId, [
+        { x: 1, y: 2 },
+        { x: 1, y: 2 },
+      ]),
+    ).rejects.toThrow("Points must be unique.");
+
+    await expect(
+      enqueue(
         projectId,
-        sourceVersionId: rootVersionId,
-        positivePoints: [
-          { x: 1, y: 2 },
-          { x: 3, y: 4 },
-        ],
-        negativePoints: [],
-        costConsent: consent(0),
-        idempotencyKey: randomUUID(),
-      }),
-    ).rejects.toThrow("Exactly one positive point");
+        rootVersionId,
+        Array.from({ length: 9 }, (_, index) => ({ x: index, y: 1 })),
+      ),
+    ).rejects.toThrow("At most 8 positive points are allowed.");
 
     await expect(enqueue(other.id, rootVersionId, { x: 10, y: 10 })).rejects.toMatchObject({
       status: 404,
@@ -445,7 +488,7 @@ describe("live SAM cost and failure settlement", () => {
     });
     const runId = (stored.body as { runId: string }).runId;
 
-    const fullMask = buildMockMask({ positive, negative: null });
+    const fullMask = buildMockMask({ positivePoints: [positive], negativePoints: [] });
     await runSegment(
       () => ({
         segment: async () => ({
@@ -510,7 +553,7 @@ describe("live SAM cost and failure settlement", () => {
       .where(eq(runs.id, runId))
       .run();
 
-    const fullMask = buildMockMask({ positive, negative: null });
+    const fullMask = buildMockMask({ positivePoints: [positive], negativePoints: [] });
     await runSegment(
       () => ({
         segment: async () => ({

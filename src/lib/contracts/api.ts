@@ -4,6 +4,7 @@ import { SCENE_PRESET_IDS } from "../../config/scene-presets";
 import {
   EDIT_MODELS,
   pointSchema,
+  SAM_MAX_POINTS_PER_LABEL,
   type Bounds,
   type EditMetrics,
   type EditTransportOptions,
@@ -83,20 +84,55 @@ export const segmentationRequestSchema = z
   .object({
     projectId: z.string().uuid(),
     sourceVersionId: z.string().uuid(),
-    positivePoints: z.array(pointSchema).length(1),
-    negativePoints: z.array(pointSchema).max(1),
+    positivePoints: z.array(pointSchema).min(1).max(SAM_MAX_POINTS_PER_LABEL),
+    negativePoints: z.array(pointSchema).max(SAM_MAX_POINTS_PER_LABEL),
     costConsent: costConsentSchema,
   })
   .strict();
 
 export type SegmentationRequest = z.infer<typeof segmentationRequestSchema>;
 
+const editScopeFields = {
+  scope: z.enum(["selection", "scene"]).default("selection"),
+  selectionId: z.string().uuid().optional(),
+  paddingPx: z.union([z.literal(16), z.literal(32)]).optional(),
+};
+
+function refineEditScope(
+  value: { scope: "selection" | "scene"; selectionId?: string; paddingPx?: 16 | 32 },
+  context: z.RefinementCtx,
+): void {
+  if (value.scope === "selection") {
+    if (value.selectionId === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["selectionId"],
+        message: "A selection is required for a selection edit.",
+      });
+    }
+    if (value.paddingPx === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["paddingPx"],
+        message: "Padding is required for a selection edit.",
+      });
+    }
+    return;
+  }
+  if (value.selectionId !== undefined || value.paddingPx !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["scope"],
+      message: "A whole-scene edit does not accept a selection or padding.",
+    });
+  }
+}
+
 export const editRequestSchema = z
   .object({
     projectId: z.string().uuid(),
     parentVersionId: z.string().uuid(),
-    selectionId: z.string().uuid(),
-    paddingPx: z.union([z.literal(16), z.literal(32)]),
+    ...editScopeFields,
     targetLabel: z.string().trim().min(1).max(80).optional(),
     instruction: z.string().trim().min(1).max(2000),
     referenceAssetIds: z
@@ -106,7 +142,8 @@ export const editRequestSchema = z
     model: z.enum(EDIT_MODELS),
     costConsent: costConsentSchema,
   })
-  .strict();
+  .strict()
+  .superRefine(refineEditScope);
 
 export type EditRequest = z.infer<typeof editRequestSchema>;
 
@@ -114,8 +151,7 @@ export const comparisonRequestSchema = z
   .object({
     projectId: z.string().uuid(),
     parentVersionId: z.string().uuid(),
-    selectionId: z.string().uuid(),
-    paddingPx: z.union([z.literal(16), z.literal(32)]),
+    ...editScopeFields,
     targetLabel: z.string().trim().min(1).max(80).optional(),
     instruction: z.string().trim().min(1).max(2000),
     referenceAssetIds: z
@@ -124,7 +160,8 @@ export const comparisonRequestSchema = z
       .refine((ids) => new Set(ids).size === ids.length, "Reference asset IDs must be unique."),
     costConsent: costConsentSchema,
   })
-  .strict();
+  .strict()
+  .superRefine(refineEditScope);
 
 export type ComparisonRequest = z.infer<typeof comparisonRequestSchema>;
 
@@ -221,10 +258,11 @@ export interface SegmentInputSummaryDto {
 }
 
 export interface EditInputSummaryDto {
+  scope: "selection" | "scene";
   parentVersionId: string;
-  selectionId: string;
-  paddingPx: 16 | 32;
-  targetLabel: string;
+  selectionId: string | null;
+  paddingPx: 16 | 32 | null;
+  targetLabel: string | null;
   instruction: string;
   referenceAssetIds: string[];
   model: string;
@@ -421,22 +459,23 @@ export type RunDetailInputDto =
     }
   | {
       kind: "edit";
+      scope: "selection" | "scene";
       parentVersionId: string;
       sourceAssetId: string;
       sourceSha256: string;
-      selectionId: string;
-      paddingPx: 16 | 32;
-      featherPx: number;
-      regionBoundingBox: Bounds;
-      regionPercentages: RegionPercentages;
-      targetLabel: string;
+      selectionId: string | null;
+      paddingPx: 16 | 32 | null;
+      featherPx: number | null;
+      regionBoundingBox: Bounds | null;
+      regionPercentages: RegionPercentages | null;
+      targetLabel: string | null;
       instruction: string;
       prompt: string;
       promptVersion: string;
       model: string;
       referenceAssetIds: string[];
       referenceSha256: string[];
-      maskPipelineVersion: string;
+      maskPipelineVersion: string | null;
       normalizationVersion: string;
       transportOptions: EditTransportOptions;
       pricingVersion: string;

@@ -21,6 +21,7 @@ import { formatUsd, shortId } from "@/lib/ui/format";
 import { ReferencePicker } from "./ReferencePicker";
 
 export interface EditFormInput {
+  scope: "selection" | "scene";
   targetLabel: string;
   instruction: string;
   referenceIds: string[];
@@ -146,22 +147,31 @@ function ResultCard(input: {
             {input.run.metrics.nativeWidth ?? "?"}×{input.run.metrics.nativeHeight ?? "?"} native ·{" "}
             {input.run.metrics.normalizedWidth ?? "?"}×{input.run.metrics.normalizedHeight ?? "?"} normalized
           </p>
-          <p>
-            Protected pixels: {input.run.metrics.protectedPixelCount} · raw MAE{" "}
-            {input.run.metrics.rawBackgroundMae === null
-              ? "n/a"
-              : input.run.metrics.rawBackgroundMae.toFixed(4)}{" "}
-            · final MAE{" "}
-            {input.run.metrics.finalBackgroundMae === null
-              ? "n/a"
-              : input.run.metrics.finalBackgroundMae.toFixed(4)}{" "}
-            · mismatches {input.run.metrics.protectedMismatchPixels}
-          </p>
-          {input.run.metrics.protectedPixelCount === 0 ? (
-            <p className="rounded border border-amber-300 bg-amber-50 p-2 text-amber-900">
-              This edit had no protected pixels, so pixel preservation was not demonstrated.
+          {input.run.metrics.scope === "scene" ? (
+            <p className="rounded border border-sky-300 bg-sky-50 p-2 text-sky-900">
+              Whole-scene edit: the model re-rendered the full frame, so pixels outside any region
+              are not guaranteed to be preserved.
             </p>
-          ) : null}
+          ) : (
+            <>
+              <p>
+                Protected pixels: {input.run.metrics.protectedPixelCount} · raw MAE{" "}
+                {input.run.metrics.rawBackgroundMae === null
+                  ? "n/a"
+                  : input.run.metrics.rawBackgroundMae.toFixed(4)}{" "}
+                · final MAE{" "}
+                {input.run.metrics.finalBackgroundMae === null
+                  ? "n/a"
+                  : input.run.metrics.finalBackgroundMae.toFixed(4)}{" "}
+                · mismatches {input.run.metrics.protectedMismatchPixels}
+              </p>
+              {input.run.metrics.protectedPixelCount === 0 ? (
+                <p className="rounded border border-amber-300 bg-amber-50 p-2 text-amber-900">
+                  This edit had no protected pixels, so pixel preservation was not demonstrated.
+                </p>
+              ) : null}
+            </>
+          )}
         </div>
       ) : null}
 
@@ -218,6 +228,7 @@ export function EditPanel(input: {
   onContinue: (versionId: string) => void;
   onEvaluation: (runId: string, evaluation: Evaluation) => Promise<boolean>;
 }) {
+  const [scope, setScope] = useState<"selection" | "scene">("selection");
   const [targetLabel, setTargetLabel] = useState("selected object");
   const [instruction, setInstruction] = useState("");
   const [referenceIds, setReferenceIds] = useState<string[]>([]);
@@ -235,8 +246,8 @@ export function EditPanel(input: {
   const ready =
     input.projectId !== null &&
     input.activeVersionId !== null &&
-    input.selection !== null &&
-    targetLabel.trim().length > 0 &&
+    (scope === "scene" || input.selection !== null) &&
+    (scope === "scene" || targetLabel.trim().length > 0) &&
     instruction.trim().length > 0 &&
     referenceIds.length <= 2 &&
     costAccepted &&
@@ -275,7 +286,8 @@ export function EditPanel(input: {
     setSubmitting(true);
     try {
       const queued = await input.onSubmit({
-        targetLabel: targetLabel.trim(),
+        scope,
+        targetLabel: scope === "selection" ? targetLabel.trim() : "",
         instruction: instruction.trim(),
         referenceIds,
         model,
@@ -291,7 +303,8 @@ export function EditPanel(input: {
     setComparing(true);
     try {
       const queued = await input.onCompare({
-        targetLabel: targetLabel.trim(),
+        scope,
+        targetLabel: scope === "selection" ? targetLabel.trim() : "",
         instruction: instruction.trim(),
         referenceIds,
         model,
@@ -315,18 +328,52 @@ export function EditPanel(input: {
     <section className="rounded-xl border border-stone-300 bg-white p-4">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-stone-500">Edit</h2>
-        <span className="text-xs text-stone-500">Padding {input.paddingPx} px</span>
+        <span className="text-xs text-stone-500">
+          {scope === "scene" ? "Whole scene" : `Padding ${input.paddingPx} px`}
+        </span>
       </div>
 
-      {input.selection === null ? (
+      <div
+        role="group"
+        aria-label="Edit scope"
+        className="mt-2 grid grid-cols-2 gap-1 rounded-md bg-stone-200 p-1 text-xs"
+      >
+        <button
+          type="button"
+          aria-pressed={scope === "selection"}
+          className={`rounded px-2 py-1 ${scope === "selection" ? "bg-white shadow-sm" : ""}`}
+          onClick={() => setScope("selection")}
+          disabled={input.busy || submitting || comparing}
+        >
+          Selection
+        </button>
+        <button
+          type="button"
+          aria-pressed={scope === "scene"}
+          className={`rounded px-2 py-1 ${scope === "scene" ? "bg-white shadow-sm" : ""}`}
+          onClick={() => setScope("scene")}
+          disabled={input.busy || submitting || comparing}
+        >
+          Whole scene
+        </button>
+      </div>
+
+      {scope === "selection" && input.selection === null ? (
         <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
           Create a successful SAM selection on this version before editing.
         </p>
       ) : (
         <p className="mt-2 text-xs text-stone-500">
-          Source: selection {shortId(input.selection.id)} on this version.
+          {scope === "scene"
+            ? "Source: the whole active version. SAM selection and padding are not used."
+            : `Source: selection ${input.selection === null ? "" : shortId(input.selection.id)} on this version.`}
         </p>
       )}
+      {scope === "scene" ? (
+        <p className="mt-2 rounded-md border border-sky-300 bg-sky-50 p-2 text-xs text-sky-900">
+          Whole-scene edits can change any part of the image; no pixels are protected.
+        </p>
+      ) : null}
 
       {!input.providerAvailable ? (
         <p className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
@@ -336,29 +383,36 @@ export function EditPanel(input: {
       ) : null}
 
       <div className="mt-3 space-y-3">
-        <div>
-          <label className="block text-xs font-medium text-stone-600" htmlFor="edit-target-label">
-            Target label
-          </label>
-          <input
-            id="edit-target-label"
-            className="mt-1 w-full rounded-md border border-stone-300 px-2 py-1.5 text-sm"
-            value={targetLabel}
-            maxLength={80}
-            onChange={(event) => setTargetLabel(event.target.value)}
-            disabled={input.busy || submitting || comparing}
-          />
-        </div>
+        {scope === "selection" ? (
+          <div>
+            <label className="block text-xs font-medium text-stone-600" htmlFor="edit-target-label">
+              Target label
+            </label>
+            <input
+              id="edit-target-label"
+              className="mt-1 w-full rounded-md border border-stone-300 px-2 py-1.5 text-sm"
+              value={targetLabel}
+              maxLength={80}
+              onChange={(event) => setTargetLabel(event.target.value)}
+              disabled={input.busy || submitting || comparing}
+            />
+          </div>
+        ) : null}
 
         <div>
           <label className="block text-xs font-medium text-stone-600" htmlFor="edit-instruction">
-            Edit instruction
+            {scope === "scene" ? "Scene instruction" : "Edit instruction"}
           </label>
           <textarea
             id="edit-instruction"
             className="mt-1 min-h-20 w-full rounded-md border border-stone-300 px-2 py-1.5 text-sm"
             value={instruction}
             maxLength={2000}
+            placeholder={
+              scope === "scene"
+                ? "e.g. Change the lighting to night, or make the wall painting cubist."
+                : undefined
+            }
             onChange={(event) => setInstruction(event.target.value)}
             disabled={input.busy || submitting || comparing}
           />

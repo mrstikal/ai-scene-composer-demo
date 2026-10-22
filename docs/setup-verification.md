@@ -2,6 +2,8 @@
 
 Verified: 2026-10-22 under Node.js 24 and npm 11.19.0.
 
+> The command table below records the pre-change fresh-setup run (32 Vitest files / 178 tests, 12 Playwright tests). The post-DoD additions on the same day changed the current baseline to 35 files / 208 tests and 16 Playwright tests; see [Test Matrix](test-matrix.md), [Selection and Edit Modes](selection-and-edit-modes.md) and [Action Feedback](ui-feedback.md).
+
 ## Method
 
 A fresh directory was copied from the working tree while excluding `node_modules`, `.next`, `data`, `assets-local`, `.env.local`, `.git`, `agent-memory`, `AGENTS.md`, test output and TypeScript build info. The copy therefore had no installed dependencies, no database, no private assets and no Git metadata. `.env.example` was copied to `.env.local` unchanged (mock mode, blank keys). The check was repeated after adding the CC0 source/reference photographs and MIT license; both licensed fixtures were selected by the committed manifest.

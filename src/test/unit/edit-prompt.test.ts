@@ -5,7 +5,12 @@ import {
   type EditSnapshot,
 } from "@/lib/contracts/domain";
 import { buildEditCommonInputHash } from "@/lib/edits/common-input";
-import { buildEditPrompt, editReferenceLine, formatPercent } from "@/lib/edits/prompt";
+import {
+  buildEditPrompt,
+  buildSceneEditPrompt,
+  editReferenceLine,
+  formatPercent,
+} from "@/lib/edits/prompt";
 
 const percentages = { left: 33.2, top: 51.8, right: 48.9, bottom: 67.5 };
 
@@ -81,6 +86,24 @@ describe("edit prompt template", () => {
         "User instruction:",
         "Make the sofa green.",
         "No additional reference images were supplied.",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("renders the whole-scene prompt without region guidance", () => {
+    expect(
+      buildSceneEditPrompt({
+        instruction: "Change the lighting to night.",
+        referenceCount: 1,
+      }),
+    ).toBe(
+      [
+        "Image 1 is the source scene to edit. Return one complete square scene aligned to Image 1, with the same camera and framing.",
+        "Apply the instruction to the entire scene. This is a full-frame edit; no region is preserved automatically.",
+        "User instruction:",
+        "Change the lighting to night.",
+        "Image 2 is a user-supplied style or appearance reference, not a replacement scene.",
         "",
       ].join("\n"),
     );

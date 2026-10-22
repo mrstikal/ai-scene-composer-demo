@@ -76,10 +76,10 @@ export function validateFullFrameMask(input: {
   mask: Uint8Array;
   width: number;
   height: number;
-  positive: Point;
-  negative: Point | null;
+  positivePoints: readonly Point[];
+  negativePoints: readonly Point[];
 }): void {
-  const { mask, width, height, positive, negative } = input;
+  const { mask, width, height, positivePoints, negativePoints } = input;
   assertMaskShape(mask, width, height);
 
   let onPixels = 0;
@@ -89,12 +89,16 @@ export function validateFullFrameMask(input: {
   }
   if (onPixels === 0) invalid("SAM returned an empty mask.");
 
-  if (positive.x >= width || positive.y >= height) invalid("The positive point is outside the image.");
-  if (mask[positive.y * width + positive.x] !== 1) {
-    invalid("The positive point is not covered by the SAM mask.");
+  for (const positive of positivePoints) {
+    if (positive.x >= width || positive.y >= height) {
+      invalid("The positive point is outside the image.");
+    }
+    if (mask[positive.y * width + positive.x] !== 1) {
+      invalid("The positive point is not covered by the SAM mask.");
+    }
   }
 
-  if (negative !== null) {
+  for (const negative of negativePoints) {
     if (negative.x >= width || negative.y >= height) {
       invalid("The negative point is outside the image.");
     }
@@ -108,10 +112,10 @@ export function buildFullFrameMaskFromRecords(input: {
   records: readonly SamMaskRecord[];
   frameWidth: number;
   frameHeight: number;
-  positive: Point;
-  negative: Point | null;
+  positivePoints: readonly Point[];
+  negativePoints: readonly Point[];
 }): FullFrameMask {
-  const { records, frameWidth, frameHeight, positive, negative } = input;
+  const { records, frameWidth, frameHeight, positivePoints, negativePoints } = input;
   const objectRecords = records.filter((record) => record.objectId === "1");
   if (objectRecords.length === 0) invalid("SAM did not return the prompted object.");
   if (objectRecords.length > 1) invalid("SAM returned duplicate records for the prompted object.");
@@ -151,8 +155,8 @@ export function buildFullFrameMaskFromRecords(input: {
     mask: pasted.mask,
     width: pasted.width,
     height: pasted.height,
-    positive,
-    negative,
+    positivePoints,
+    negativePoints,
   });
   return pasted;
 }

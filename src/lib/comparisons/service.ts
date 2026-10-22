@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { AppEnv } from "../config/env";
 import { assertCompatibleConfig, getPricingConfig, getProviderCapabilities } from "../config/pricing";
 import type { ComparisonResponse, CostConsent } from "../contracts/api";
-import { COMPARISON_MODELS, type ComparisonModel } from "../contracts/domain";
+import { COMPARISON_MODELS, type ComparisonModel, type EditScope } from "../contracts/domain";
 import type { DatabaseHandle } from "../db/client";
 import { runs } from "../db/schema";
 import { immediateTransaction } from "../db/transaction";
@@ -56,9 +56,10 @@ export async function enqueueComparison(input: {
   env: AppEnv;
   projectId: string;
   parentVersionId: string;
-  selectionId: string;
-  paddingPx: 16 | 32;
-  targetLabel: string | undefined;
+  scope: EditScope;
+  selectionId?: string;
+  paddingPx?: 16 | 32;
+  targetLabel?: string | undefined;
   instruction: string;
   referenceAssetIds: string[];
   costConsent: CostConsent;
@@ -66,11 +67,16 @@ export async function enqueueComparison(input: {
 }): Promise<StoredIdempotentResponse> {
   const { handle, env, projectId, idempotencyKey } = input;
   const { db, sqlite } = handle;
-  const text = normalizeEditText({ targetLabel: input.targetLabel, instruction: input.instruction });
+  const text = normalizeEditText({
+    scope: input.scope,
+    targetLabel: input.targetLabel,
+    instruction: input.instruction,
+  });
   const requestHash = hashRequest({
     operation: "comparison",
     projectId,
     parentVersionId: input.parentVersionId,
+    scope: input.scope,
     selectionId: input.selectionId,
     paddingPx: input.paddingPx,
     targetLabel: text.targetLabel,
@@ -129,6 +135,7 @@ export async function enqueueComparison(input: {
           env,
           projectId,
           parentVersionId: input.parentVersionId,
+          scope: input.scope,
           selectionId: input.selectionId,
           paddingPx: input.paddingPx,
           targetLabel: text.targetLabel,
@@ -168,7 +175,7 @@ export async function enqueueComparison(input: {
             comparisonGroupId,
             retryOfRunId: null,
             parentVersionId: input.parentVersionId,
-            inputSelectionId: entry.selection.id,
+            inputSelectionId: entry.selection?.id ?? null,
             model,
             inputSnapshotJson: entry.snapshot,
             commonInputHash: entry.commonInputHash,

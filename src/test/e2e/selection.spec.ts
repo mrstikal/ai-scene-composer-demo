@@ -81,6 +81,12 @@ test.describe("mock SAM selection", () => {
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await openProject(page, projectId);
+    const sceneImage = page.getByAltText("Active canonical scene");
+    const sceneSrc = await sceneImage.getAttribute("src");
+    expect(sceneSrc).not.toBeNull();
+    await expect(
+      page.getByRole("link", { name: "Open scene full resolution" }),
+    ).toHaveAttribute("href", sceneSrc as string);
     await clickAtFraction(page, 0.25, 0.75);
     await waitForSelections(request, projectId, 1);
     await expect(page.getByText(/Selection [0-9a-f]{8}/)).toBeVisible();
@@ -173,4 +179,66 @@ test.describe("mock SAM selection", () => {
     const third = await waitForSelections(request, projectId, 3);
     expect(third.selections[2]?.positivePoints).toHaveLength(1);
   });
+
+  test("adds positive and negative points with Photoshop-style modifiers", async ({
+    page,
+    request,
+  }) => {
+    const projectId = await createProject(request, "E2E Selection Modifiers");
+    await importSample(request, projectId);
+    await openProject(page, projectId);
+
+    await clickAtFraction(page, 0.5, 0.6);
+    const first = await waitForSelections(request, projectId, 1);
+    const firstSelection = first.selections[0];
+    if (firstSelection === undefined) throw new Error("First selection is missing.");
+    await expect(
+      page.getByText(`Selection ${firstSelection.id.slice(0, 8)}`, { exact: true }),
+    ).toBeVisible({ timeout: 30000 });
+
+    await page.keyboard.down("Shift");
+    await clickAtFraction(page, 0.6, 0.6);
+    await page.keyboard.up("Shift");
+    const second = await waitForSelections(request, projectId, 2);
+    const secondSelection = second.selections[1];
+    if (secondSelection === undefined) throw new Error("Second selection is missing.");
+    await expect(
+      page.getByText(`Selection ${secondSelection.id.slice(0, 8)}`, { exact: true }),
+    ).toBeVisible({ timeout: 30000 });
+    expect(second.selections[1]?.positivePoints).toHaveLength(2);
+    expect(second.selections[1]?.negativePoints).toHaveLength(0);
+    expect(second.selections[0]).toEqual(firstSelection);
+    await expect(page.getByText(/\+ \(\d+, \d+\)/)).toHaveCount(2);
+
+    await page.keyboard.down("Alt");
+    await clickAtFraction(page, 0.4, 0.4);
+    await page.keyboard.up("Alt");
+    const third = await waitForSelections(request, projectId, 3);
+    expect(third.selections[2]?.positivePoints).toHaveLength(2);
+    expect(third.selections[2]?.negativePoints).toHaveLength(1);
+    expect(third.selections[2]?.positivePoints).toEqual(
+      second.selections[1]?.positivePoints,
+    );
+    await expect(page.getByText(/− \(\d+, \d+\)/)).toHaveCount(1);
+  });
+
+  test("shows an error flash that stays until dismissed", async ({ page, request }) => {
+    const projectId = await createProject(request, "E2E Feedback");
+    await importSample(request, projectId);
+    await openProject(page, projectId);
+
+    await page.keyboard.down("Alt");
+    await clickAtFraction(page, 0.3, 0.3);
+    await page.keyboard.up("Alt");
+
+    const flash = page
+      .getByRole("alert")
+      .filter({ hasText: "Place at least one positive point before subtracting." });
+    await expect(flash).toBeVisible();
+    await page.waitForTimeout(3500);
+    await expect(flash).toBeVisible();
+    await flash.getByRole("button", { name: "Dismiss notification" }).click();
+    await expect(flash).toBeHidden();
+  });
+
 });

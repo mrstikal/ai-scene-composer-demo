@@ -32,6 +32,16 @@ npm run worker
 
 Open `http://127.0.0.1:3000`. The worker prints `SCENE_WORKER_READY` after acquiring the single-worker lock and completing startup recovery.
 
+### Restart rules during development
+
+The web app hot-reloads, but the worker does **not** (`tsx src/worker/index.ts` loads the code once).
+
+- Restart `npm run worker` after any change under `src/lib/**`, `src/worker/**` or DTO/schema code. A stale worker fails new runs with confusing errors (for example an old edit handler rejecting a `scope: "scene"` snapshot) even though the UI and API already use the new code.
+- Do **not** run `npm run build` while `npm run dev` is running. Both write to `.next`; the build overwrites the dev server's cache and the dev server can then serve stale or broken modules.
+- If behaviour does not match the current source, stop both processes, run `rm -rf .next`, start them again and hard-refresh the browser tab (Ctrl/Cmd+Shift+R).
+
+`npm run typecheck`, `npm run lint` and `npm test` do not need a running server.
+
 ## Modes
 
 - `AI_MODE=mock` (default): deterministic test doubles, no network calls and zero provider charges.
@@ -127,7 +137,7 @@ The Generate tab offers exactly three server-resolved presets and a Custom Promp
 
 ## SAM selection
 
-`POST /api/segmentations` requires an `Idempotency-Key` and exactly one positive point, optionally one negative point. The server derives the 1024 x 1024 dimensions and source hash from the selected Version's canonical asset, validates ownership, provider availability, pricing consent and budget, and returns `202 {runId}`. A click is the intentional paid action; the UI shows the per-click reservation beside the canvas.
+`POST /api/segmentations` requires an `Idempotency-Key`, one to eight positive points and zero to eight negative points. The server derives the 1024 x 1024 dimensions and source hash from the selected Version's canonical asset, validates ownership, provider availability, pricing consent and budget, and returns `202 {runId}`. A click is the intentional paid action; the UI shows the per-click reservation beside the canvas. Shift-click adds a positive point and Alt/Option-click subtracts a negative point, while a plain click replaces the selection.
 
 The worker parses the official `@meta-sam/parser` stream once, requires a completed outcome without error diagnostics, selects the box/mask records for object ID `1`, pastes the cropped raster at its half-open box origin into a full-frame mask, and rejects out-of-bounds, empty, misaligned or point-inconsistent masks. The Selection is immutable and bound to one source Version. It stores the full-frame binary mask plus two region variants:
 
@@ -135,13 +145,13 @@ The worker parses the official `@meta-sam/parser` stream once, requires a comple
 - an 8-pixel inward feather `A` where each pixel is `round(255 * valid erode count / 8)`
 - half-open bounding boxes and one-decimal percentages for prompt guidance
 
-Padding changes reuse the saved variants and never call SAM again. The UI supports positive/negative point modes, mask visibility and opacity, allowed-region display, saved-selection reuse on the same Version, pending submission guards, and stale-result guards based on the source Version and point fingerprint.
+Padding changes reuse the saved variants and never call SAM again. The UI supports positive/negative point modes plus Photoshop-style Shift (add positive) and Alt/Option (add negative) modifiers, mask visibility and opacity, allowed-region display, saved-selection reuse on the same Version, pending submission guards, and stale-result guards based on the source Version and point fingerprint.
 
 Live completed SAM responses reserve and charge the verified per-image rate (`USD 0.0025`); mock and fixture runs record zero calculated cost. A definitive rejection with no provider cost evidence leaves the reservation as a hold, and ambiguous outcomes remain `unknown` with `needs_review`.
 
 ## Editing and branches
 
-`POST /api/edits` requires an `Idempotency-Key`, the active parent Version, a successful Selection on that same Version, padding 16 or 32, a target label, an instruction, zero to two ordered reference assets, and a supported model. The server freezes the parent hash, Selection, chosen region, references, compiled prompt and transport options in the Run snapshot. The source image is always the first provider image; references follow in explicit order. No mask, E/A image or visual guide is sent to OpenRouter.
+`POST /api/edits` requires an `Idempotency-Key`, the active parent Version, an instruction, zero to two ordered reference assets and a supported model. `scope: "selection"` (the default) also requires a successful Selection on that same Version, padding 16 or 32 and a target label; the server freezes the Selection, chosen region and masks. `scope: "scene"` edits the whole frame and requires no Selection or padding. In both cases the server freezes the parent hash, references, compiled prompt and transport options. The source image is always the first provider image; references follow in explicit order. No mask, E/A image or visual guide is sent to OpenRouter.
 
 The worker calls the selected adapter at most once, persists raw/canonical assets and a durable receipt, then composites the normalized generated image with the stored E/A region:
 
@@ -149,15 +159,15 @@ The worker calls the selected adapter at most once, persists raw/canonical asset
 - `A=255` copies the generated RGB exactly.
 - Intermediate alpha uses `round((A*G + (255-A)*S)/255)`.
 - Every protected pixel (`E=0`) must remain byte-equal to the parent; final background MAE and mismatch count must be zero.
-- Diagnostics persist protected pixel count, raw/final background MAE and mismatch count. An edit with no protected pixels succeeds but is flagged as not demonstrating pixel preservation.
+- Selection edits persist protected pixel count, raw/final background MAE and mismatch count; an edit with no protected pixels succeeds but is flagged as not demonstrating pixel preservation. Whole-scene edits report `scope: "scene"`, zero protected pixels and a visible no-guarantee notice instead of the selection diagnostics.
 
 A successful edit creates an immutable child Version with the final asset, raw asset reference and edit metadata. It does **not** switch the project's active Version. The UI shows raw/final output, the exact-parent before/after slider and a Continue action; only Continue or an explicit history click changes the active pointer. Reference uploads are stored as project assets, and the project read model exposes safe reference summaries for reuse after reload.
 
-The model selector exposes exactly **Flare** and **Sunburst**. A single edit sends only the selected model; the provider contract, prompt, mask handling and compositing path are identical for both.
+The model selector exposes exactly **Flare** and **Sunburst**. A single edit sends only the selected model; the provider contract and prompt are identical for both. Selection edits composite the generated image through stored masks and report protected-pixel diagnostics; whole-scene edits accept the full generated frame and report `scope: "scene"` with no protected-pixel guarantee.
 
 ## Comparison
 
-`POST /api/comparisons` accepts the edit body without a model. In one immediate transaction the server validates the shared inputs once, freezes identical model-independent snapshots for Flare and Sunburst, checks the combined two-image reservation atomically and inserts exactly two sibling Runs with one `comparisonGroupId`. Both initial Runs have the same parent Version, Selection, references, prompt, transport options and `commonInputHash`; neither run can chain from the other candidate. If the combined reservation exceeds the remaining project budget, neither Run nor an idempotency record is created.
+`POST /api/comparisons` accepts the edit body without a model, including either `selection` or `scene` scope. In scene scope no SAM selection is required and `sharedSelectionCost` is null. In one immediate transaction the server validates the shared inputs once, freezes identical model-independent snapshots for Flare and Sunburst, checks the combined two-image reservation atomically and inserts exactly two sibling Runs with one `comparisonGroupId`. Both initial Runs have the same parent Version, Selection, references, prompt, transport options and `commonInputHash`; neither run can chain from the other candidate. If the combined reservation exceeds the remaining project budget, neither Run nor an idempotency record is created.
 
 The response is `202 {comparisonGroupId, runIds:[flareRunId, sunburstRunId]}`. Candidate order is preserved in the response and UI even when the worker claims them in a different order. `GET /api/comparisons/:id` returns grouped candidate Runs and attempts, the successful Selection's originating SAM cost exactly once, and per-model/combined candidate cost. A failed candidate does not hide the successful sibling; retry reruns only the failed candidate, keeps the group ID and common input hash, and leaves the sibling untouched. Initial creation inserts exactly two jobs; explicit retries may add attempts, all visible in the attempt history.
 
@@ -199,21 +209,21 @@ The default suite is offline and zero-cost: `AI_MODE=mock`, `SAM_MODE=fixture` a
 | Command | Coverage |
 |---|---|
 | `npm test` | Unit and integration tests, including provider contracts, exact mask/composite math, retries, idempotency, worker recovery, comparison atomicity, cost partitions, evaluation validation, secret/path leaks and repository hygiene |
-| `npm run test:e2e` | Mock generation, SAM selection, editing, comparison/evaluation, mobile layout and basic accessibility |
+| `npm run test:e2e` | Mock generation, multi-point SAM selection, selection/whole-scene editing, comparison/evaluation, mobile layout and basic accessibility |
 | `npm run typecheck` | Strict TypeScript |
 | `npm run lint` | ESLint |
 | `npm run build` | Production build |
 | `npm run check:contracts` | Offline provider/config drift check; no network, keys or paid probes |
 | `npm run db:generate` | Should report no schema drift when migrations are current |
 
-Current baseline: 32 Vitest files / 178 offline tests and 12 Playwright mock tests. Known npm audit/eslint deprecation warnings and the no-forced-upgrade policy are recorded in the fresh-install record. The detailed acceptance mapping is in [docs/test-matrix.md](docs/test-matrix.md), the fresh-install record is in [docs/setup-verification.md](docs/setup-verification.md), and live evidence is in [docs/live-evidence.md](docs/live-evidence.md); mock results never count as live evidence.
+Current baseline after the post-DoD multi-point selection, edit-scope and action-feedback work: 35 Vitest files / 208 offline tests and 16 Playwright mock tests. Known npm audit/eslint deprecation warnings and the no-forced-upgrade policy are recorded in the fresh-install record. The detailed acceptance mapping is in [docs/test-matrix.md](docs/test-matrix.md), feature details are in [docs/selection-and-edit-modes.md](docs/selection-and-edit-modes.md) and [docs/ui-feedback.md](docs/ui-feedback.md), the fresh-install record is in [docs/setup-verification.md](docs/setup-verification.md), and live evidence is in [docs/live-evidence.md](docs/live-evidence.md); mock results never count as live evidence.
 
 ## Demo walkthrough (mock, no keys)
 
 1. Run the setup commands above, then start `npm run dev` and `npm run worker` in two terminals and open `http://127.0.0.1:3000`.
 2. Create a project with **New Scene** and choose **Use Bundled Sample**. The synthetic living-room becomes the immutable root.
-3. Click the sofa on the scene canvas, switch padding 16/32, and add a negative point to see a new source-bound Selection. Padding changes reuse stored variants and do not call SAM again.
-4. In Edit, set the target label and instruction, optionally upload `src/test/fixtures/synthetic/reference-sofa-v1.png` as a reference, select **Flare** or **Sunburst**, confirm the cost, and run the edit. Inspect raw/final output, the exact-parent slider, diagnostics, the evaluation form and **Inspect Request**.
+3. Click the sofa on the scene canvas, then use Shift-click to add positive points and Alt/Option-click to subtract negative points; each click creates a new source-bound Selection. Switch padding 16/32 to see stored variants without another SAM call.
+4. In Edit, choose **Selection** or **Whole scene**. Selection uses the target label and instruction; Whole scene sends only the instruction (for example "Change the lighting to night."). Optionally upload `src/test/fixtures/synthetic/reference-sofa-v1.png` as a reference, select **Flare** or **Sunburst**, confirm the cost, and run the edit. Inspect raw/final output, the exact-parent slider, diagnostics, the evaluation form and **Inspect Request**.
 5. With the same Selection, choose **Compare Both**. Wait for both candidates, then inspect the side-by-side final images, raw/final toggle, shared SAM cost once, per-model/combined candidate cost, attempt history, request details and the optional before/after overlay. Save a manual evaluation.
 6. Choose **Continue from Flare** (or Sunburst) and confirm only that candidate's final Version becomes active. Reload the page and verify the comparison, evaluation and costs are rehydrated.
 7. Use a second project to demonstrate the Generate tab: one preset and one custom prompt, then inspect the queued/failed/retry states and the project costs panel.

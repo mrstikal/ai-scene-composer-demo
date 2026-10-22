@@ -6,7 +6,8 @@
   "notes": [
     "Read-only public documentation snapshot. It is not proof of live account access, model output, latency or charges.",
     "No credentials were inspected, printed or used. No paid probe was made.",
-    "Re-check this file before any opt-in live test. If a required capability disappears, report PROVIDER_UNAVAILABLE instead of substituting a model or parameter."
+    "Re-check this file before any opt-in live test. If a required capability disappears, report PROVIDER_UNAVAILABLE instead of substituting a model or parameter.",
+    "SAM prompt point counts (1-8 positive, 0-8 negative) are project usage limits, not a documented provider maximum. Shift adds a positive point and Alt/Option adds a negative point in the UI; each click is a separate paid SAM request."
   ],
   "contractFreeze": {
     "nativeMaskParameter": false,
@@ -330,10 +331,17 @@
         "height": 1024
       },
       "objectId": "1",
-      "positivePoints": 1,
+      "positivePoints": {
+        "min": 1,
+        "max": 8
+      },
       "negativePoints": {
         "min": 0,
-        "max": 1
+        "max": 8
+      },
+      "modifierKeys": {
+        "shift": "add-positive",
+        "alt": "add-negative"
       },
       "metadata": {
         "mask_encoding": "one_bit"

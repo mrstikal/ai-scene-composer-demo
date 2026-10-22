@@ -96,6 +96,7 @@ export async function compositeEdit(input: {
 
   const bytes = await encodeRgbPng(final, width, height);
   return {
+    scope: "selection",
     bytes,
     width,
     height,

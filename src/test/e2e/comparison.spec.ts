@@ -43,6 +43,7 @@ interface Snapshot {
     commonInputHash: string | null;
     parentVersionId: string | null;
     outputVersionId: string | null;
+    editInput: { scope: "selection" | "scene"; selectionId: string | null } | null;
     evaluation: {
       boundaryArtifacts: number;
       promptAdherence: number;
@@ -126,6 +127,14 @@ test.describe("mock comparison and evaluation", () => {
     expect(groupRuns.every((run) => run.parentVersionId === rootVersionId)).toBe(true);
 
     const comparison = page.locator("section").filter({ hasText: "Frozen input identical" });
+    await expect(
+      comparison.getByRole("link", { name: "Open Flare final image full resolution" }),
+    ).toBeVisible();
+    await comparison.getByRole("button", { name: "Raw" }).first().click();
+    await expect(
+      comparison.getByRole("link", { name: "Open Flare raw image full resolution" }),
+    ).toBeVisible();
+    await comparison.getByRole("button", { name: "Final" }).first().click();
     await expect(comparison.getByText("Attempt history (2)")).toBeVisible();
     await expect(comparison.getByRole("button", { name: "Continue from Flare" })).toBeVisible();
     await expect(comparison.getByRole("button", { name: "Continue from Sunburst" })).toBeVisible();
@@ -173,4 +182,40 @@ test.describe("mock comparison and evaluation", () => {
     await expect(page.getByRole("heading", { name: "Costs" })).toBeVisible();
     await expect(page.getByText("Commitment")).toBeVisible();
   });
+
+  test("compares both models for a whole-scene instruction without a selection", async ({
+    page,
+    request,
+  }) => {
+    const projectId = await createProject(request, "E2E Scene Comparison");
+    await importSample(request, projectId);
+    await openProject(page, projectId);
+
+    await page.getByRole("button", { name: "Whole scene" }).click();
+    await page.getByLabel("Scene instruction").fill("Change the lighting to night.");
+    await page.getByLabel(/I confirm the estimated cost/).check();
+    await page.getByRole("button", { name: "Compare Both" }).click();
+
+    await expect(page.getByText("Frozen input identical")).toBeVisible({ timeout: 60000 });
+    await expect(
+      page.getByText("Whole-scene comparison: no SAM mask is shared or charged."),
+    ).toBeVisible();
+
+    await expect
+      .poll(
+        async () =>
+          (await snapshot(request, projectId)).runs.filter(
+            (run) => run.comparisonGroupId !== null && run.status === "succeeded",
+          ).length,
+        { timeout: 60000 },
+      )
+      .toBe(2);
+    const current = await snapshot(request, projectId);
+    const groupRuns = current.runs.filter((run) => run.comparisonGroupId !== null);
+    expect(groupRuns).toHaveLength(2);
+    expect(groupRuns.every((run) => run.editInput?.scope === "scene")).toBe(true);
+    expect(groupRuns.every((run) => run.editInput?.selectionId === null)).toBe(true);
+    expect(current.selections).toHaveLength(0);
+  });
+
 });

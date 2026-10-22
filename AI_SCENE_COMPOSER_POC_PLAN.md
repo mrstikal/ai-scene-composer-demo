@@ -37,7 +37,7 @@ AI scene generation is a required entry path, not a later extension. It offers *
 | Image provider | OpenRouter dedicated `POST /api/v1/images` only |
 | Segmentation | Hosted Meta Model API, model `sam-3.1`; separate credentials and billing |
 | Canonical scene | Opaque, sRGB, 8-bit RGB, 1024 x 1024 PNG |
-| Selection | Exactly one positive point and zero or one negative point |
+| Selection | One to eight positive points and zero to eight negative points (Shift adds positive, Alt/Option adds negative) |
 | Mask padding | 16 px by default, or 32 px; changing it does not call SAM again |
 | Feathering | Fixed 8 px, entirely inside the allowed edit region |
 | Edit references | Zero, one or two uploaded photographs, in an explicit stable order |
@@ -333,7 +333,7 @@ Use half-open hit bounds (`displayedLeft <= clientX < displayedLeft+displayedWid
 
 A positive click replaces the previous selection and clears its negative point. Negative mode is available only after a positive point; one negative click sends both points in a **new** segmentation run. Further corrections replace the negative point rather than accumulating an unbounded list.
 
-The server derives dimensions from the source version's asset. It validates coordinates, requires one positive and at most one negative point, and rejects the same pixel used for both labels before calling Meta.
+The server derives dimensions from the source version's asset. It validates coordinates, requires one to eight positive and zero to eight negative points, and rejects duplicate pixels or the same pixel used for both labels before calling Meta.
 
 ### 5.2 Hosted SAM Contract
 
@@ -498,7 +498,7 @@ Image 2 is the user-supplied appearance reference for the target object, not a r
 Images 2 and 3 are ordered user-supplied appearance references for the target object, not replacement scenes.
 ```
 
-Use consistent newlines and numeric formatting. Snapshot the final string, target label, original instruction, source/reference/mask/region hashes, padding, pipeline versions and transport options. No LLM rewrite or automatic object captioning is allowed.
+Use consistent newlines and numeric formatting. Snapshot the final string, optional target label, original instruction, source/reference hashes, pipeline versions and transport options; selection scope also snapshots mask/region hashes and padding. No LLM rewrite or automatic object captioning is allowed.
 
 ### 7.4 Adapter Boundary and Response
 
@@ -569,11 +569,11 @@ Add indexes using these logical entity/field names: `Run(status,createdAt,id)` f
 |---|---|---|
 | `generate` | No parent/selection; GenerationInput and resolved prompt snapshot | Raw/canonical asset; root Version; project pointers |
 | `segment` | Parent source Version; canonical asset/hash/dimensions; points and exact SAM prompt | Selection, full mask and both region variants; no Version |
-| `edit` | Parent Version, input Selection, chosen region, ordered references and compiled prompt | Raw/canonical assets, final Version, diagnostics |
+| `edit` | Parent Version, scope (selection or whole scene), optional Selection/region, ordered references and compiled prompt | Raw/canonical assets, final Version, diagnostics |
 
-Every run, including SAM, has a model ID and a discriminated `inputSnapshotJson`. The generate snapshot includes section 3.3 fields. The segment snapshot includes source ID/hash, dimensions, point arrays and parser version. The edit snapshot includes parent/source IDs and hash, selection and mask hashes, E/A IDs and hashes, padding, feather=8, normalization/mask/prompt versions, reference IDs/hashes in order, target label, instruction, final prompt and fixed transport options. All include pricing/capability versions.
+Every run, including SAM, has a model ID and a discriminated `inputSnapshotJson`. The generate snapshot includes section 3.3 fields. The segment snapshot includes source ID/hash, dimensions, point arrays and parser version. The edit snapshot includes scope, parent/source IDs and hash, normalization/prompt versions, reference IDs/hashes in order, instruction, final prompt and fixed transport options. Selection scope additionally includes selection and mask hashes, E/A IDs and hashes, padding, feather=8 and target label; whole-scene scope omits all selection fields. All include pricing/capability versions.
 
-`commonInputHash` for comparison edits hashes only model-independent inference inputs: source/selection/region IDs and hashes, dimensions, ordered references, target/instruction/final prompt, padding/feather, processing/template versions and actual transport options. Exclude model identity, pricing/capability record versions, consent, other accounting/discovery metadata, timestamps and run IDs. Both initial sibling runs must have the same hash and all the same model-independent inference fields.
+`commonInputHash` for comparison edits hashes only model-independent inference inputs: scope, source IDs/hashes, dimensions, ordered references, instruction/final prompt, processing/template versions and actual transport options. Selection scope also hashes selection/region IDs and hashes plus padding/feather and target label. Exclude model identity, pricing/capability record versions, consent, other accounting/discovery metadata, timestamps and run IDs. Both initial sibling runs must have the same hash and all the same model-independent inference fields.
 
 ### 8.2 History and Read Models
 
@@ -927,7 +927,7 @@ Use a neutral three-column desktop layout; at widths below 1024 px use a single-
 
 - Left: source picker/current project, New Scene, small project selector and clickable version tree.
 - Center: scene, positive/negative mode, mask/allowed-region overlay, before/after slider.
-- Right: target label, edit instruction, 16/32 px padding, 0-2 ordered references, single-model selector, Run Edit, Compare Both, result cards and costs.
+- Right: scope toggle (Selection / Whole scene), target label and 16/32 px padding only for Selection, edit instruction, 0-2 ordered references, single-model selector, Run Edit, Compare Both, result cards and costs.
 
 ### 12.1 Empty Project and Generation
 
@@ -940,7 +940,7 @@ Show queued/running stage, retryable failure and cost for initial generation eve
 1. Display the scene and full-frame SAM mask aligned to the same actual image rectangle. Default cyan overlay opacity is 0.35; expose a toggle and opacity range 0-0.8.
 2. Display the allowed region for the selected padding distinctly from the raw object mask. Explain that only the allowed region may change in the final composite.
 3. Disable point submission while its segmentation POST/job is pending to avoid accidental paid corrections. A subsequent deliberate negative-point request is another billed call.
-4. An edit requires a successful Selection for the active Version, a valid instruction/target and valid references. Disable model actions otherwise and explain why.
+4. A selection edit requires a successful Selection for the active Version, a valid instruction/target and valid references; a whole-scene edit requires only a valid instruction and references. Disable model actions otherwise and explain why.
 5. Changing padding uses stored region assets and does not change Selection or request another mask.
 6. Reference thumbnails are labeled Image 2/Image 3 with explicit move-left/move-right and remove controls. Submission freezes the displayed order.
 7. Result cards show status, model, raw/final toggle, native/normalized dimensions, provider latency, cost/provenance and errors. One comparison failure must not hide the other success.

@@ -128,6 +128,7 @@ function enqueueEditFor(input: {
     env,
     projectId: input.projectId,
     parentVersionId: input.parentVersionId,
+    scope: "selection",
     selectionId: input.selectionId,
     paddingPx: 16,
     targetLabel: input.targetLabel ?? "sofa",
@@ -156,6 +157,56 @@ function imageAdapter(result: ImageGenerationResult): ImageEditAdapter {
 }
 
 describe("mock edit pipeline and immutable child versions", () => {
+  it("runs a whole-scene edit without a SAM selection", async () => {
+    const { projectId, rootVersionId } = await sampleProject();
+    const stored = await enqueueEdit({
+      handle: testEnv.handle,
+      env: testEnv.env,
+      projectId,
+      parentVersionId: rootVersionId,
+      scope: "scene",
+      instruction: "Change the lighting to night.",
+      referenceAssetIds: [],
+      model: "openai/gpt-image-2.5-flare",
+      costConsent: consent(editReservationUsdMicros(testEnv.env)),
+      idempotencyKey: randomUUID(),
+    });
+    const runId = (stored.body as { runId: string }).runId;
+
+    await runEdit();
+
+    const snapshot = getProjectSnapshot(testEnv.handle.db, projectId, testEnv.env);
+    const run = snapshot.runs.find((candidate) => candidate.id === runId);
+    expect(run?.status).toBe("succeeded");
+    expect(run?.editInput).toMatchObject({
+      scope: "scene",
+      selectionId: null,
+      paddingPx: null,
+      targetLabel: null,
+      instruction: "Change the lighting to night.",
+    });
+    expect(run?.metrics).toMatchObject({
+      scope: "scene",
+      protectedPixelCount: 0,
+      rawBackgroundMae: null,
+      finalBackgroundMae: null,
+    });
+    const outputVersion = snapshot.versions.find(
+      (version) => version.id === run?.outputVersionId,
+    );
+    expect(outputVersion?.parentVersionId).toBe(rootVersionId);
+    expect(outputVersion?.sourceMetadata).toMatchObject({ kind: "edit", scope: "scene" });
+    expect(snapshot.selections).toHaveLength(0);
+
+    const detail = getRunDetail(testEnv.handle.db, runId, testEnv.env);
+    if (detail.input === null || detail.input.kind !== "edit") {
+      throw new Error("Expected an edit input.");
+    }
+    expect(detail.input.scope).toBe("scene");
+    expect(detail.input.selectionId).toBeNull();
+    expect(detail.input.prompt).toContain("no region is preserved automatically");
+  });
+
   it("composites the generated image exactly inside the allowed region and creates a child without switching active", async () => {
     const { projectId, rootVersionId } = await sampleProject();
     const selectionId = await createSelection(projectId, rootVersionId);

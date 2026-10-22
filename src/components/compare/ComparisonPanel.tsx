@@ -68,7 +68,7 @@ function CandidateCard(input: {
     view === "raw" && rawUrl !== null ? "raw" : finalUrl !== null ? "final" : rawUrl !== null ? "raw" : "none";
 
   return (
-    <div className="space-y-3 rounded-lg border border-stone-200 bg-stone-50 p-3">
+    <div className="min-w-0 space-y-3 rounded-lg border border-stone-200 bg-stone-50 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-sm font-semibold text-stone-800">
@@ -76,6 +76,7 @@ function CandidateCard(input: {
           </p>
           <p className="text-xs text-stone-500">
             {latest.status} / {latest.stage}
+            {latest.editInput?.scope === "scene" ? " · whole scene" : " · selection"}
             {latest.providerLatencyMs !== null ? ` · ${latest.providerLatencyMs} ms` : ""}
           </p>
         </div>
@@ -95,11 +96,15 @@ function CandidateCard(input: {
             className={`rounded px-2 py-1 text-xs ${activeView === "raw" ? "bg-white shadow-sm" : ""}`}
             onClick={() => setView("raw")}
             disabled={rawUrl === null}
+            title="Raw provider output, normalized for display"
           >
-            Raw (normalized for display)
+            Raw
           </button>
         </div>
       </div>
+      {activeView === "raw" ? (
+        <p className="text-[11px] text-stone-500">Raw provider output, normalized for display.</p>
+      ) : null}
 
       {activeView === "final" && finalUrl !== null ? (
         <div className="space-y-2">
@@ -111,7 +116,7 @@ function CandidateCard(input: {
                   alt={`${modelLabel(input.model)} exact parent scene`}
                   fill
                   unoptimized
-                  sizes="(max-width: 1024px) 100vw, 360px"
+                  sizes="(max-width: 1024px) 100vw, 620px"
                   className="object-contain"
                 />
                 <div
@@ -123,7 +128,7 @@ function CandidateCard(input: {
                     alt={`${modelLabel(input.model)} final comparison result`}
                     fill
                     unoptimized
-                    sizes="(max-width: 1024px) 100vw, 360px"
+                    sizes="(max-width: 1024px) 100vw, 620px"
                     className="object-contain"
                   />
                 </div>
@@ -140,20 +145,44 @@ function CandidateCard(input: {
                 alt={`${modelLabel(input.model)} final comparison result`}
                 fill
                 unoptimized
-                sizes="(max-width: 1024px) 100vw, 360px"
+                sizes="(max-width: 1024px) 100vw, 620px"
                 className="object-contain"
               />
             )}
           </div>
-          <label className="flex items-center gap-2 text-xs text-stone-600">
-            <input
-              type="checkbox"
-              checked={showBeforeAfter}
-              onChange={(event) => setShowBeforeAfter(event.target.checked)}
-              disabled={parentUrl === null}
-            />
-            Before / After
-          </label>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-stone-600">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={showBeforeAfter}
+                onChange={(event) => setShowBeforeAfter(event.target.checked)}
+                disabled={parentUrl === null}
+              />
+              Before / After
+            </label>
+            <div className="flex flex-wrap gap-3">
+              <a
+                href={finalUrl}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={`Open ${modelLabel(input.model)} final image full resolution`}
+                className="underline decoration-stone-400 underline-offset-2"
+              >
+                Open final full resolution
+              </a>
+              {showBeforeAfter && parentUrl !== null ? (
+                <a
+                  href={parentUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-label={`Open ${modelLabel(input.model)} parent scene full resolution`}
+                  className="underline decoration-stone-400 underline-offset-2"
+                >
+                  Open parent full resolution
+                </a>
+              ) : null}
+            </div>
+          </div>
           {showBeforeAfter && parentUrl !== null ? (
             <input
               id={`comparison-before-after-${latest.id}`}
@@ -169,61 +198,74 @@ function CandidateCard(input: {
           ) : null}
         </div>
       ) : activeView === "raw" && rawUrl !== null ? (
-        <div className="relative aspect-square overflow-hidden rounded-md border border-stone-200 bg-stone-100">
-          <Image
-            src={rawUrl}
-            alt={`${modelLabel(input.model)} raw provider output`}
-            fill
-            unoptimized
-            sizes="(max-width: 1024px) 100vw, 360px"
-            className="object-contain"
-          />
+        <div className="space-y-2">
+          <div className="relative aspect-square overflow-hidden rounded-md border border-stone-200 bg-stone-100">
+            <Image
+              src={rawUrl}
+              alt={`${modelLabel(input.model)} raw provider output`}
+              fill
+              unoptimized
+              sizes="(max-width: 1024px) 100vw, 620px"
+              className="object-contain"
+            />
+          </div>
+          <a
+            href={rawUrl}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`Open ${modelLabel(input.model)} raw image full resolution`}
+            className="text-xs underline decoration-stone-400 underline-offset-2"
+          >
+            Open raw full resolution
+          </a>
         </div>
       ) : (
         <p className="text-xs text-stone-500">Result image is not available.</p>
       )}
 
-      <dl className="space-y-1 text-xs text-stone-600">
-        <div className="flex justify-between gap-2">
-          <dt>Model</dt>
-          <dd className="text-right font-medium">
-            {latest.model} · {latest.executionMode}
-          </dd>
-        </div>
-        <div className="flex justify-between gap-2">
-          <dt>Cost</dt>
-          <dd className="text-right font-medium">
-            <CostState run={latest} />
-          </dd>
-        </div>
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs text-stone-600">
+        <dt className="text-stone-500">Model</dt>
+        <dd className="min-w-0 break-words text-right font-medium [overflow-wrap:anywhere]">
+          {latest.model} · {latest.executionMode}
+        </dd>
+        <dt className="text-stone-500">Cost</dt>
+        <dd className="text-right font-medium">
+          <CostState run={latest} />
+        </dd>
         {latest.metrics !== null ? (
           <>
-            <div className="flex justify-between gap-2">
-              <dt>Native / normalized</dt>
-              <dd className="text-right font-medium">
-                {latest.metrics.nativeWidth ?? "?"}×{latest.metrics.nativeHeight ?? "?"} /{" "}
-                {latest.metrics.normalizedWidth ?? "?"}×{latest.metrics.normalizedHeight ?? "?"}
-              </dd>
-            </div>
-            <div className="flex justify-between gap-2">
-              <dt>Protected pixels</dt>
-              <dd className="text-right font-medium">
-                {latest.metrics.protectedPixelCount} · raw MAE{" "}
-                {latest.metrics.rawBackgroundMae === null
-                  ? "n/a"
-                  : latest.metrics.rawBackgroundMae.toFixed(4)}{" "}
-                · final MAE{" "}
-                {latest.metrics.finalBackgroundMae === null
-                  ? "n/a"
-                  : latest.metrics.finalBackgroundMae.toFixed(4)}{" "}
-                · mismatches {latest.metrics.protectedMismatchPixels}
-              </dd>
-            </div>
+            <dt className="text-stone-500">Native / normalized</dt>
+            <dd className="text-right font-medium">
+              {latest.metrics.nativeWidth ?? "?"}×{latest.metrics.nativeHeight ?? "?"} /{" "}
+              {latest.metrics.normalizedWidth ?? "?"}×{latest.metrics.normalizedHeight ?? "?"}
+            </dd>
+            <dt className="text-stone-500">Protected pixels</dt>
+            <dd className="text-right font-medium leading-snug">
+              {latest.metrics.scope === "scene"
+                ? "not applicable (whole scene)"
+                : `${latest.metrics.protectedPixelCount} · raw MAE ${
+                    latest.metrics.rawBackgroundMae === null
+                      ? "n/a"
+                      : latest.metrics.rawBackgroundMae.toFixed(4)
+                  } · final MAE ${
+                    latest.metrics.finalBackgroundMae === null
+                      ? "n/a"
+                      : latest.metrics.finalBackgroundMae.toFixed(4)
+                  } · mismatches ${latest.metrics.protectedMismatchPixels}`}
+            </dd>
           </>
         ) : null}
       </dl>
 
-      {latest.metrics !== null && latest.metrics.protectedPixelCount === 0 ? (
+      {latest.metrics !== null && latest.metrics.scope === "scene" ? (
+        <p className="rounded border border-sky-300 bg-sky-50 p-2 text-xs text-sky-900">
+          Whole-scene edit: no region is protected, so the model may change any part of the frame.
+        </p>
+      ) : null}
+
+      {latest.metrics !== null &&
+      latest.metrics.scope === "selection" &&
+      latest.metrics.protectedPixelCount === 0 ? (
         <p className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
           No protected pixels, so pixel preservation was not demonstrated for this candidate.
         </p>
@@ -360,6 +402,7 @@ export function ComparisonPanel(input: {
     new Set(initialHashes).size === 1;
   const sharedSelection = freshDetail?.sharedSelectionCost ?? null;
   const candidateCost = freshDetail?.candidateCost ?? null;
+  const sceneComparison = groupRuns.some((run) => run.editInput?.scope === "scene");
 
   return (
     <section className="rounded-xl border border-stone-300 bg-white p-4">
@@ -377,15 +420,19 @@ export function ComparisonPanel(input: {
       </div>
 
       <div className="mt-2 space-y-1 text-xs text-stone-600">
-        <p>
-          Shared mask (SAM):{" "}
-          {sharedSelection === null
-            ? "unavailable"
-            : `${formatUsd(sharedSelection.amountUsdMicros)}${
-                sharedSelection.provenance === null ? "" : ` ${sharedSelection.provenance}`
-              }`}
-          . Counted once, not per candidate.
-        </p>
+        {sceneComparison ? (
+          <p>Whole-scene comparison: no SAM mask is shared or charged.</p>
+        ) : (
+          <p>
+            Shared mask (SAM):{" "}
+            {sharedSelection === null
+              ? "unavailable"
+              : `${formatUsd(sharedSelection.amountUsdMicros)}${
+                  sharedSelection.provenance === null ? "" : ` ${sharedSelection.provenance}`
+                }`}
+            . Counted once, not per candidate.
+          </p>
+        )}
         {candidateCost !== null ? (
           <>
             <p>
@@ -410,7 +457,7 @@ export function ComparisonPanel(input: {
         {costError !== null ? <p className="text-amber-800">{costError}</p> : null}
       </div>
 
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+      <div className="mt-3 grid gap-4 lg:grid-cols-2">
         {candidates.map((candidate) => (
           <CandidateCard
             key={candidate.model}

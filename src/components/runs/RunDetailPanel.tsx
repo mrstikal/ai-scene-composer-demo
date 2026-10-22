@@ -73,22 +73,35 @@ function RunInputDetail(input: { detail: RunDetailDto }) {
 
   return (
     <dl className="space-y-1 text-xs">
+      <Field label="Scope">
+        {frozen.scope === "scene" ? "whole scene" : "selection"}
+      </Field>
       <Field label="Parent version">{frozen.parentVersionId}</Field>
       <Field label="Source asset">{frozen.sourceAssetId}</Field>
       <Field label="Source SHA-256">{frozen.sourceSha256}</Field>
-      <Field label="Selection">{frozen.selectionId}</Field>
-      <Field label="Padding / feather">
-        {frozen.paddingPx} px / {frozen.featherPx} px
-      </Field>
-      <Field label="Region bbox">
-        {frozen.regionBoundingBox.left},{frozen.regionBoundingBox.top} to{" "}
-        {frozen.regionBoundingBox.right},{frozen.regionBoundingBox.bottom}
-      </Field>
-      <Field label="Region percent">
-        {frozen.regionPercentages.left.toFixed(1)}, {frozen.regionPercentages.top.toFixed(1)} to{" "}
-        {frozen.regionPercentages.right.toFixed(1)}, {frozen.regionPercentages.bottom.toFixed(1)}
-      </Field>
-      <Field label="Target">{frozen.targetLabel}</Field>
+      {frozen.selectionId !== null ? (
+        <Field label="Selection">{frozen.selectionId}</Field>
+      ) : null}
+      {frozen.paddingPx !== null ? (
+        <Field label="Padding / feather">
+          {frozen.paddingPx} px / {frozen.featherPx ?? 0} px
+        </Field>
+      ) : null}
+      {frozen.regionBoundingBox !== null ? (
+        <Field label="Region bbox">
+          {frozen.regionBoundingBox.left},{frozen.regionBoundingBox.top} to{" "}
+          {frozen.regionBoundingBox.right},{frozen.regionBoundingBox.bottom}
+        </Field>
+      ) : null}
+      {frozen.regionPercentages !== null ? (
+        <Field label="Region percent">
+          {frozen.regionPercentages.left.toFixed(1)}, {frozen.regionPercentages.top.toFixed(1)} to{" "}
+          {frozen.regionPercentages.right.toFixed(1)}, {frozen.regionPercentages.bottom.toFixed(1)}
+        </Field>
+      ) : null}
+      {frozen.targetLabel !== null ? (
+        <Field label="Target">{frozen.targetLabel}</Field>
+      ) : null}
       <Field label="Model">{frozen.model}</Field>
       <Field label="References">
         {frozen.referenceAssetIds.length === 0
@@ -97,7 +110,9 @@ function RunInputDetail(input: { detail: RunDetailDto }) {
               .map((assetId, index) => `${index + 2}: ${assetId} (${frozen.referenceSha256[index]})`)
               .join("; ")}
       </Field>
-      <Field label="Mask pipeline">{frozen.maskPipelineVersion}</Field>
+      {frozen.maskPipelineVersion !== null ? (
+        <Field label="Mask pipeline">{frozen.maskPipelineVersion}</Field>
+      ) : null}
       <Field label="Normalization">{frozen.normalizationVersion}</Field>
       <Field label="Prompt version">{frozen.promptVersion}</Field>
       <Field label="Pricing">{frozen.pricingVersion}</Field>

@@ -164,10 +164,11 @@ export function editInputFor(run: RunSummarySource): RunSummaryDto["editInput"] 
   const parsed = editSnapshotSchema.safeParse(run.inputSnapshotJson);
   if (!parsed.success) return null;
   return {
+    scope: parsed.data.scope,
     parentVersionId: parsed.data.parentVersionId,
-    selectionId: parsed.data.selectionId,
-    paddingPx: parsed.data.paddingPx,
-    targetLabel: parsed.data.targetLabel,
+    selectionId: parsed.data.selectionId ?? null,
+    paddingPx: parsed.data.paddingPx ?? null,
+    targetLabel: parsed.data.targetLabel ?? null,
     instruction: parsed.data.instruction,
     referenceAssetIds: parsed.data.referenceAssetIds,
     model: parsed.data.model,

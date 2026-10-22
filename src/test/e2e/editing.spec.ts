@@ -44,15 +44,17 @@ interface Snapshot {
     rawAssetId: string | null;
     normalizedRawAssetId: string | null;
     editInput: {
+      scope: "selection" | "scene";
       parentVersionId: string;
-      selectionId: string;
-      paddingPx: number;
-      targetLabel: string;
+      selectionId: string | null;
+      paddingPx: number | null;
+      targetLabel: string | null;
       instruction: string;
       referenceAssetIds: string[];
       model: string;
     } | null;
     metrics: {
+      scope: "selection" | "scene";
       protectedPixelCount: number;
       rawBackgroundMae: number | null;
       finalBackgroundMae: number | null;
@@ -291,4 +293,60 @@ test.describe("mock single-model editing", () => {
     expect(thirdChild?.parentVersionId).toBe(sample.rootVersionId);
     expect(edited.project.activeVersionId).toBe(sample.rootVersionId);
   });
+
+  test("runs a whole-scene edit without a SAM selection", async ({ page, request }) => {
+    const projectId = await createProject(request, "E2E Whole Scene");
+    const sample = await importSample(request, projectId);
+    await openProject(page, projectId);
+
+    await expect(
+      page.getByText("Create a successful SAM selection on this version before editing."),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "Whole scene" }).click();
+    await expect(
+      page.getByText("Source: the whole active version. SAM selection and padding are not used."),
+    ).toBeVisible();
+
+    await page.getByLabel("Scene instruction").fill("Change the lighting to night.");
+    await page.getByLabel(/I confirm the estimated cost/).check();
+    const runButton = page.getByRole("button", { name: "Run Edit" });
+    await expect(runButton).toBeEnabled();
+
+    await page.route("**/api/edits", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await route.continue();
+    });
+    const editResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" && response.url().includes("/api/edits"),
+    );
+    await runButton.click();
+    await expect(page.getByText(/Running scene edit/)).toBeVisible();
+    await editResponse;
+    await page.unroute("**/api/edits");
+
+    await expect(page.getByRole("button", { name: "Continue from This Result" })).toBeVisible({
+      timeout: 60000,
+    });
+    await expect(page.getByText("Scene edit completed.")).toBeVisible({ timeout: 60000 });
+    await expect(page.getByText("Scene edit completed.")).toBeHidden({ timeout: 6000 });
+
+    const edited = await waitForEdits(request, projectId, 1);
+    const run = edited.runs.find((candidate) => candidate.kind === "edit");
+    if (run === undefined) throw new Error("Edit run is missing.");
+    expect(run.editInput).toMatchObject({
+      scope: "scene",
+      selectionId: null,
+      paddingPx: null,
+      targetLabel: null,
+      instruction: "Change the lighting to night.",
+    });
+    expect(run.metrics).toMatchObject({ scope: "scene", protectedPixelCount: 0 });
+    expect(edited.selections).toHaveLength(0);
+    expect(edited.project.activeVersionId).toBe(sample.rootVersionId);
+    await expect(
+      page.getByText(/Whole-scene edit: the model re-rendered the full frame/),
+    ).toBeVisible();
+  });
+
 });

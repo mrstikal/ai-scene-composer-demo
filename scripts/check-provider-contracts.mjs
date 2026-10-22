@@ -284,9 +284,12 @@ if (capabilities !== undefined && pricing !== undefined) {
   equal(sam.prompt.size.width, 1024, 'metaSam.prompt.size.width');
   equal(sam.prompt.size.height, 1024, 'metaSam.prompt.size.height');
   equal(sam.prompt.objectId, '1', 'metaSam.prompt.objectId');
-  equal(sam.prompt.positivePoints, 1, 'metaSam.prompt.positivePoints');
+  equal(sam.prompt.positivePoints.min, 1, 'metaSam.prompt.positivePoints.min');
+  equal(sam.prompt.positivePoints.max, 8, 'metaSam.prompt.positivePoints.max');
   equal(sam.prompt.negativePoints.min, 0, 'metaSam.prompt.negativePoints.min');
-  equal(sam.prompt.negativePoints.max, 1, 'metaSam.prompt.negativePoints.max');
+  equal(sam.prompt.negativePoints.max, 8, 'metaSam.prompt.negativePoints.max');
+  equal(sam.prompt.modifierKeys.shift, 'add-positive', 'metaSam.prompt.modifierKeys.shift');
+  equal(sam.prompt.modifierKeys.alt, 'add-negative', 'metaSam.prompt.modifierKeys.alt');
   equal(sam.prompt.metadata.mask_encoding, 'one_bit', 'metaSam.prompt.metadata.mask_encoding');
   equal(sam.outputContract.requiresCompletedOutcome, true, 'metaSam.outputContract.requiresCompletedOutcome');
   equal(sam.outputContract.errorDiagnosticsAllowed, 0, 'metaSam.outputContract.errorDiagnosticsAllowed');

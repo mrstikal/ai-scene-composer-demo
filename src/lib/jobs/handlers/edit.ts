@@ -7,9 +7,11 @@ import {
   editMetricsSchema,
   editSnapshotSchema,
   editSourceMetadataSchema,
+  isSelectionEditSnapshot,
   type EditMetrics,
   type EditSnapshot,
   type EditSourceMetadata,
+  type SelectionEditSnapshot,
 } from "../../contracts/domain";
 import type { AppDatabase } from "../../db/client";
 import { assets, projects, runs, versions, type RunRow } from "../../db/schema";
@@ -51,17 +53,22 @@ function parseSnapshot(run: RunRow): EditSnapshot {
 function editMetadata(snapshot: EditSnapshot): EditSourceMetadata {
   return editSourceMetadataSchema.parse({
     kind: "edit",
+    scope: snapshot.scope,
     parentVersionId: snapshot.parentVersionId,
-    selectionId: snapshot.selectionId,
-    paddingPx: snapshot.paddingPx,
-    featherPx: snapshot.featherPx,
-    targetLabel: snapshot.targetLabel,
+    ...(isSelectionEditSnapshot(snapshot)
+      ? {
+          selectionId: snapshot.selectionId,
+          paddingPx: snapshot.paddingPx,
+          featherPx: snapshot.featherPx,
+          targetLabel: snapshot.targetLabel,
+          maskPipelineVersion: snapshot.maskPipelineVersion,
+        }
+      : {}),
     instruction: snapshot.instruction,
     promptSha256: snapshot.promptSha256,
     model: snapshot.model,
     referenceAssetIds: snapshot.referenceAssetIds,
     referenceSha256: snapshot.referenceSha256,
-    maskPipelineVersion: snapshot.maskPipelineVersion,
     promptVersion: snapshot.promptVersion,
     normalizationVersion: snapshot.normalizationVersion,
     pricingVersion: snapshot.pricingVersion,
@@ -112,7 +119,7 @@ async function loadSourceBytes(
   return sourceBytes;
 }
 
-function findMaskAssets(context: RunHandlerContext, snapshot: EditSnapshot) {
+function findMaskAssets(context: RunHandlerContext, snapshot: SelectionEditSnapshot) {
   const binaryAsset = context.db
     .select()
     .from(assets)
@@ -144,15 +151,13 @@ function findMaskAssets(context: RunHandlerContext, snapshot: EditSnapshot) {
   return { binaryAsset, allowedAsset, blendAsset };
 }
 
-async function loadSourceAndMasks(
+async function loadMasks(
   context: RunHandlerContext,
-  snapshot: EditSnapshot,
+  snapshot: SelectionEditSnapshot,
 ): Promise<{
-  sourceBytes: Buffer;
   allowedMask: Uint8Array;
   blendMask: Uint8Array;
 }> {
-  const sourceBytes = await loadSourceBytes(context, snapshot);
   const { allowedAsset, blendAsset } = findMaskAssets(context, snapshot);
 
   const allowed = await decodeMaskPng(
@@ -170,7 +175,7 @@ async function loadSourceAndMasks(
     throw new AppError(422, "INVALID_SELECTION", "The edit region assets have wrong dimensions.");
   }
 
-  return { sourceBytes, allowedMask: allowed.mask, blendMask: blend.alpha };
+  return { allowedMask: allowed.mask, blendMask: blend.alpha };
 }
 
 async function loadReferenceImages(
@@ -205,8 +210,8 @@ async function persistFinalAndChild(input: {
   normalizedAssetId: string;
   sourceBytes: Buffer;
   generatedBytes: Buffer;
-  allowedMask: Uint8Array;
-  blendMask: Uint8Array;
+  allowedMask: Uint8Array | null;
+  blendMask: Uint8Array | null;
   nativeWidth: number | null;
   nativeHeight: number | null;
 }): Promise<void> {
@@ -228,46 +233,74 @@ async function persistFinalAndChild(input: {
     return;
   }
 
-  const composite = await compositeEdit({
-    sourceBytes: input.sourceBytes,
-    generatedBytes: input.generatedBytes,
-    allowedMask: input.allowedMask,
-    blendMask: input.blendMask,
-  });
-  const metrics = editMetricsSchema.parse({
-    protectedPixelCount: composite.protectedPixelCount,
-    rawBackgroundMae: composite.rawBackgroundMae,
-    finalBackgroundMae: composite.finalBackgroundMae,
-    protectedMismatchPixels: composite.protectedMismatchPixels,
-    ...(input.nativeWidth === null ? {} : { nativeWidth: input.nativeWidth }),
-    ...(input.nativeHeight === null ? {} : { nativeHeight: input.nativeHeight }),
-    normalizedWidth: composite.width,
-    normalizedHeight: composite.height,
-    compositePipelineVersion: composite.compositePipelineVersion,
-    maskPipelineVersion: composite.maskPipelineVersion,
-  });
+  let finalBytes: Buffer;
+  let finalWidth = 1024;
+  let finalHeight = 1024;
+  let metrics: EditMetrics;
 
-  if (
-    composite.protectedPixelCount > 0 &&
-    (composite.protectedMismatchPixels !== 0 || composite.finalBackgroundMae !== 0)
-  ) {
-    markEditFailed(
-      context,
-      run,
-      "PROTECTED_PIXELS_CHANGED",
-      "Protected pixels changed during compositing.",
-      metrics,
-    );
-    return;
+  if (isSelectionEditSnapshot(snapshot)) {
+    if (input.allowedMask === null || input.blendMask === null) {
+      throw new AppError(422, "INVALID_SELECTION", "The edit region assets are missing.");
+    }
+    const composite = await compositeEdit({
+      sourceBytes: input.sourceBytes,
+      generatedBytes: input.generatedBytes,
+      allowedMask: input.allowedMask,
+      blendMask: input.blendMask,
+    });
+    metrics = editMetricsSchema.parse({
+      scope: "selection",
+      protectedPixelCount: composite.protectedPixelCount,
+      rawBackgroundMae: composite.rawBackgroundMae,
+      finalBackgroundMae: composite.finalBackgroundMae,
+      protectedMismatchPixels: composite.protectedMismatchPixels,
+      ...(input.nativeWidth === null ? {} : { nativeWidth: input.nativeWidth }),
+      ...(input.nativeHeight === null ? {} : { nativeHeight: input.nativeHeight }),
+      normalizedWidth: composite.width,
+      normalizedHeight: composite.height,
+      compositePipelineVersion: composite.compositePipelineVersion,
+      maskPipelineVersion: composite.maskPipelineVersion,
+    });
+
+    if (
+      composite.protectedPixelCount > 0 &&
+      (composite.protectedMismatchPixels !== 0 || composite.finalBackgroundMae !== 0)
+    ) {
+      markEditFailed(
+        context,
+        run,
+        "PROTECTED_PIXELS_CHANGED",
+        "Protected pixels changed during compositing.",
+        metrics,
+      );
+      return;
+    }
+
+    finalBytes = composite.bytes;
+    finalWidth = composite.width;
+    finalHeight = composite.height;
+  } else {
+    metrics = editMetricsSchema.parse({
+      scope: "scene",
+      protectedPixelCount: 0,
+      rawBackgroundMae: null,
+      finalBackgroundMae: null,
+      protectedMismatchPixels: 0,
+      ...(input.nativeWidth === null ? {} : { nativeWidth: input.nativeWidth }),
+      ...(input.nativeHeight === null ? {} : { nativeHeight: input.nativeHeight }),
+      normalizedWidth: 1024,
+      normalizedHeight: 1024,
+    });
+    finalBytes = input.generatedBytes;
   }
 
   const finalAsset = await writeImageAsset({
     context,
     run,
-    bytes: composite.bytes,
+    bytes: finalBytes,
     mimeType: "image/png",
-    width: composite.width,
-    height: composite.height,
+    width: finalWidth,
+    height: finalHeight,
   });
   const versionId = randomUUID();
   const now = Date.now();
@@ -428,7 +461,10 @@ async function processReceipt(
     normalizedAsset = { id: saved.id, bytes: normalized.bytes };
   }
 
-  const regions = await loadSourceAndMasks(context, snapshot);
+  const sourceBytes = await loadSourceBytes(context, snapshot);
+  const masks = isSelectionEditSnapshot(snapshot)
+    ? await loadMasks(context, snapshot)
+    : { allowedMask: null, blendMask: null };
   const metadata = receipt.responseMetadata;
   const nativeWidth =
     typeof metadata.nativeWidth === "number" ? metadata.nativeWidth : rawAsset.width > 0 ? rawAsset.width : null;
@@ -441,10 +477,10 @@ async function processReceipt(
     snapshot,
     rawAssetId: receipt.rawAssetId,
     normalizedAssetId: normalizedAsset.id,
-    sourceBytes: regions.sourceBytes,
+    sourceBytes,
     generatedBytes: normalizedAsset.bytes,
-    allowedMask: regions.allowedMask,
-    blendMask: regions.blendMask,
+    allowedMask: masks.allowedMask,
+    blendMask: masks.blendMask,
     nativeWidth,
     nativeHeight,
   });
@@ -528,7 +564,7 @@ export function createEditHandler(options: EditHandlerOptions = {}): RunHandler 
     let referenceBytes: Buffer[];
     try {
       sourceBytes = await loadSourceBytes(context, snapshot);
-      findMaskAssets(context, snapshot);
+      if (isSelectionEditSnapshot(snapshot)) findMaskAssets(context, snapshot);
       referenceBytes = await loadReferenceImages(context, snapshot);
     } catch {
       markRunFailed(context.db, run, {

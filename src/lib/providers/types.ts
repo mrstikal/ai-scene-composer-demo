@@ -68,8 +68,8 @@ export interface SegmentationAdapterInput {
   image: Buffer;
   width: number;
   height: number;
-  positive: Point;
-  negative: Point | null;
+  positivePoints: Point[];
+  negativePoints: Point[];
   prompt: string;
 }
 

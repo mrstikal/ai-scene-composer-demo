@@ -38,3 +38,28 @@ export function buildEditPrompt(input: {
     "",
   ].join("\n");
 }
+
+export function buildSceneEditPrompt(input: {
+  instruction: string;
+  referenceCount: number;
+}): string {
+  const referenceLine =
+    input.referenceCount === 0
+      ? "No additional reference images were supplied."
+      : input.referenceCount === 1
+        ? "Image 2 is a user-supplied style or appearance reference, not a replacement scene."
+        : input.referenceCount === 2
+          ? "Images 2 and 3 are ordered user-supplied style or appearance references, not replacement scenes."
+          : (() => {
+              throw new Error("Whole-scene edits support zero, one or two references.");
+            })();
+
+  return [
+    "Image 1 is the source scene to edit. Return one complete square scene aligned to Image 1, with the same camera and framing.",
+    "Apply the instruction to the entire scene. This is a full-frame edit; no region is preserved automatically.",
+    "User instruction:",
+    input.instruction,
+    referenceLine,
+    "",
+  ].join("\n");
+}

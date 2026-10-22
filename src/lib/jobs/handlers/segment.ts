@@ -269,16 +269,16 @@ async function persistSelection(
     return;
   }
 
-  const positive = snapshot.positivePoints[0];
-  if (positive === undefined) {
+  const positivePoints = snapshot.positivePoints;
+  if (positivePoints.length === 0) {
     throw new AppError(422, "INVALID_SELECTION", "Segmentation snapshot has no positive point.");
   }
   validateFullFrameMask({
     mask: fullMask.mask,
     width: fullMask.width,
     height: fullMask.height,
-    positive,
-    negative: snapshot.negativePoints[0] ?? null,
+    positivePoints,
+    negativePoints: snapshot.negativePoints,
   });
 
   if (
@@ -425,8 +425,8 @@ async function resumeFromReceipt(
         records: receipt.records,
         frameWidth: snapshot.width,
         frameHeight: snapshot.height,
-        positive: snapshot.positivePoints[0],
-        negative: snapshot.negativePoints[0] ?? null,
+        positivePoints: snapshot.positivePoints,
+        negativePoints: snapshot.negativePoints,
       });
     } catch {
       markSegmentFailed(
@@ -684,8 +684,8 @@ export function createSegmentHandler(options: SegmentHandlerOptions = {}): RunHa
         image,
         width: snapshot.width,
         height: snapshot.height,
-        positive: snapshot.positivePoints[0],
-        negative: snapshot.negativePoints[0] ?? null,
+        positivePoints: snapshot.positivePoints,
+        negativePoints: snapshot.negativePoints,
         prompt: snapshot.prompt,
       });
     } catch {

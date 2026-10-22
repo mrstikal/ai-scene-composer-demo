@@ -18,6 +18,7 @@ export async function POST(request: Request): Promise<Response> {
       env,
       projectId: input.projectId,
       parentVersionId: input.parentVersionId,
+      scope: input.scope,
       selectionId: input.selectionId,
       paddingPx: input.paddingPx,
       targetLabel: input.targetLabel,

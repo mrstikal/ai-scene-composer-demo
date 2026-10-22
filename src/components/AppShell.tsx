@@ -6,10 +6,20 @@ import { SCENE_PRESETS, type ScenePresetId } from "@/config/scene-presets";
 import { ComparisonPanel } from "@/components/compare/ComparisonPanel";
 import { CostSummary } from "@/components/costs/CostSummary";
 import { EditPanel, type EditFormInput } from "@/components/editor/EditPanel";
-import { SceneCanvas } from "@/components/editor/SceneCanvas";
+import { SceneCanvas, type CanvasSelectionModifiers } from "@/components/editor/SceneCanvas";
 import { SelectionPanel } from "@/components/editor/SelectionPanel";
 import { useSelectionState, versionProvenance } from "@/components/editor/use-selection-state";
+import { ActionFeed } from "@/components/ui/ActionFeed";
+import { useActionFeed, type RunningAction } from "@/components/ui/use-action-feed";
+import { SAM_MAX_POINTS_PER_LABEL } from "@/lib/contracts/domain";
 import type { Evaluation, MaskPaddingPx, Point } from "@/lib/contracts/domain";
+import {
+  detectRunTransitions,
+  isActiveRunStatus,
+  runActionLabel,
+  runFailureText,
+  runSuccessText,
+} from "@/lib/ui/action-feed";
 import { shortId } from "@/lib/ui/format";
 import type { PendingSelectionRequest } from "@/lib/ui/selection-guard";
 import { createSubmitKeyStore } from "@/lib/ui/submit-keys";
@@ -74,12 +84,11 @@ export function AppShell() {
   const [role, setRole] = useState<"base" | "reference">("base");
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [connectionWarning, setConnectionWarning] = useState<string | null>(null);
   const [selectionMode, setSelectionMode] = useState<"positive" | "negative">("positive");
-  const [positivePoint, setPositivePoint] = useState<Point | null>(null);
-  const [negativePoint, setNegativePoint] = useState<Point | null>(null);
+  const [positivePoints, setPositivePoints] = useState<Point[]>([]);
+  const [negativePoints, setNegativePoints] = useState<Point[]>([]);
   const [selectedSelectionId, setSelectedSelectionId] = useState<string | null>(null);
   const [selectionUiVersionId, setSelectionUiVersionId] = useState<string | null>(null);
   const [paddingPx, setPaddingPx] = useState<MaskPaddingPx>(16);
@@ -102,6 +111,33 @@ export function AppShell() {
   const snapshotRequestSeqRef = useRef(0);
   const selectionInFlightRef = useRef<string | null>(null);
   const selectionRequestSeqRef = useRef(0);
+  const comparisonRef = useRef<HTMLElement | null>(null);
+  const shouldScrollToComparisonRef = useRef(false);
+  const previousRunStatusesRef = useRef(new Map<string, RunSummaryDto["status"]>());
+  const previousRunsProjectRef = useRef<string | null>(null);
+  const feedStartedAtRef = useRef(0);
+
+  const { flashes, showSuccess, showError, dismiss } = useActionFeed();
+  const setError = useCallback(
+    (message: string | null) => {
+      if (message !== null) showError(message);
+    },
+    [showError],
+  );
+  const setNotice = useCallback(
+    (message: string | null) => {
+      if (message !== null) showSuccess(message);
+    },
+    [showSuccess],
+  );
+  const beginBusy = useCallback((label: string) => {
+    setBusyLabel(label);
+    setBusy(true);
+  }, []);
+  const endBusy = useCallback(() => {
+    setBusy(false);
+    setBusyLabel(null);
+  }, []);
 
   function submitKey(operation: string, signature: string): string {
     return submitKeys.current.keyFor(operation, signature);
@@ -178,7 +214,7 @@ export function AppShell() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [setError]);
 
   const {
     activeVersion,
@@ -192,15 +228,15 @@ export function AppShell() {
     submittingThisView,
     selectionPending,
     displaySelection,
-    displayPositivePoint,
-    displayNegativePoint,
+    displayPositivePoints,
+    displayNegativePoints,
     activeVariant,
   } = useSelectionState({
     snapshot,
     projectId,
     selectionMode,
-    positivePoint,
-    negativePoint,
+    positivePoints,
+    negativePoints,
     selectedSelectionId,
     selectionUiVersionId,
     pendingSelection,
@@ -268,6 +304,17 @@ export function AppShell() {
       .sort((left, right) => left.createdAt - right.createdAt)
       .at(-1) ??
     null;
+  useEffect(() => {
+    if (
+      !shouldScrollToComparisonRef.current ||
+      selectedComparisonGroupId === null ||
+      latestComparisonGroup?.id !== selectedComparisonGroupId
+    ) {
+      return;
+    }
+    shouldScrollToComparisonRef.current = false;
+    comparisonRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [selectedComparisonGroupId, latestComparisonGroup]);
   const editHistory = (snapshot?.runs ?? [])
     .filter((run) => run.kind === "edit" && run.comparisonGroupId === null)
     .sort((left, right) => left.createdAt - right.createdAt);
@@ -303,6 +350,49 @@ export function AppShell() {
   const workerWarning =
     hasActiveRuns &&
     (health?.worker.status === "missing" || health?.worker.status === "stale");
+
+  const runningActions: RunningAction[] = [];
+  const runningLabels = new Set<string>();
+  function addRunningAction(id: string, label: string): void {
+    if (runningLabels.has(label)) return;
+    runningLabels.add(label);
+    runningActions.push({ id, label });
+  }
+  if (busyLabel !== null) addRunningAction("busy", busyLabel);
+  for (const run of snapshot?.runs ?? []) {
+    if (!isActiveRunStatus(run.status)) continue;
+    addRunningAction(`run-${run.id}`, runActionLabel(run));
+  }
+  if (submittingThisView) addRunningAction("selection-submit", "SAM selection");
+
+  useEffect(() => {
+    if (snapshot === null || projectId === null) return;
+
+    if (previousRunsProjectRef.current !== projectId) {
+      previousRunsProjectRef.current = projectId;
+      feedStartedAtRef.current = Date.now();
+      previousRunStatusesRef.current = new Map(
+        snapshot.runs.map((run) => [run.id, run.status]),
+      );
+      return;
+    }
+
+    const transitions = detectRunTransitions(
+      previousRunStatusesRef.current,
+      snapshot.runs,
+      feedStartedAtRef.current,
+    );
+    previousRunStatusesRef.current = new Map(
+      snapshot.runs.map((run) => [run.id, run.status]),
+    );
+    for (const transition of transitions) {
+      if (transition.outcome === "succeeded") {
+        showSuccess(runSuccessText(transition));
+      } else {
+        showError(runFailureText(transition));
+      }
+    }
+  }, [snapshot, projectId, showSuccess, showError]);
 
   useEffect(() => {
     if (projectId === null || (!hasActiveRuns && pollNow === 0)) return;
@@ -352,7 +442,7 @@ export function AppShell() {
       controller.abort();
       if (timer !== null) clearTimeout(timer);
     };
-  }, [projectId, hasActiveRuns, pollNow]);
+  }, [projectId, hasActiveRuns, pollNow, setError]);
 
   useEffect(() => {
     if (projectId === null) return;
@@ -378,7 +468,7 @@ export function AppShell() {
 
   async function handleCreateProject(): Promise<void> {
     selectionRequestSeqRef.current += 1;
-    setBusy(true);
+    beginBusy("project creation");
     setError(null);
     setNotice(null);
     setCosts(null);
@@ -394,8 +484,8 @@ export function AppShell() {
       setSelectionUiVersionId(null);
       setSelectionAttemptFailed(false);
       setSelectionMode("positive");
-      setPositivePoint(null);
-      setNegativePoint(null);
+      setPositivePoints([]);
+      setNegativePoints([]);
       setSelectedSelectionId(null);
       await refreshProjects();
       await loadProject(result.projectId);
@@ -403,7 +493,7 @@ export function AppShell() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Project creation failed.");
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -411,7 +501,7 @@ export function AppShell() {
     snapshotRequestSeqRef.current += 1;
     selectionRequestSeqRef.current += 1;
     currentProjectIdRef.current = null;
-    setBusy(true);
+    beginBusy("project loading");
     setError(null);
     setNotice(null);
     setCosts(null);
@@ -419,21 +509,21 @@ export function AppShell() {
     setSelectionUiVersionId(null);
     setSelectionAttemptFailed(false);
     setSelectionMode("positive");
-    setPositivePoint(null);
-    setNegativePoint(null);
+    setPositivePoints([]);
+    setNegativePoints([]);
     setSelectedSelectionId(null);
     try {
       await loadProject(nextId);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Project load failed.");
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
   async function handleSample(): Promise<void> {
     if (projectId === null) return;
-    setBusy(true);
+    beginBusy("sample import");
     setError(null);
     setNotice(null);
     const operation = "sample";
@@ -454,13 +544,13 @@ export function AppShell() {
       clearSubmitKeyOnRejection(operation, cause);
       setError(cause instanceof Error ? cause.message : "Sample import failed.");
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
   async function handleUpload(): Promise<void> {
     if (projectId === null || file === null) return;
-    setBusy(true);
+    beginBusy("image upload");
     setError(null);
     setNotice(null);
     const operation = "upload";
@@ -490,13 +580,13 @@ export function AppShell() {
       clearSubmitKeyOnRejection(operation, cause);
       setError(cause instanceof Error ? cause.message : "Upload failed.");
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
   async function handleUploadReference(file: File): Promise<string | null> {
     if (projectId === null) return null;
-    setBusy(true);
+    beginBusy("reference upload");
     setError(null);
     setNotice(null);
     const operation = "reference-upload";
@@ -528,18 +618,18 @@ export function AppShell() {
       setError(cause instanceof Error ? cause.message : "Reference upload failed.");
       return null;
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
   async function handleEditSubmit(input: EditFormInput): Promise<boolean> {
     if (projectId === null || snapshot === null || activeVersionId === null) return false;
-    if (activeSelection === null) {
-      setError("A successful SAM selection is required before editing.");
+    if (input.scope === "selection" && activeSelection === null) {
+      setError("A successful SAM selection is required before editing a selection.");
       return false;
     }
 
-    setBusy(true);
+    beginBusy("scene edit");
     setError(null);
     setNotice(null);
     const operation = "edit";
@@ -548,8 +638,9 @@ export function AppShell() {
       JSON.stringify({
         projectId,
         parentVersionId: activeVersionId,
-        selectionId: activeSelection.id,
-        paddingPx,
+        scope: input.scope,
+        selectionId: input.scope === "selection" ? activeSelection?.id : undefined,
+        paddingPx: input.scope === "selection" ? paddingPx : undefined,
         targetLabel: input.targetLabel,
         instruction: input.instruction,
         referenceIds: input.referenceIds,
@@ -567,9 +658,10 @@ export function AppShell() {
         body: JSON.stringify({
           projectId,
           parentVersionId: activeVersionId,
-          selectionId: activeSelection.id,
-          paddingPx,
-          targetLabel: input.targetLabel,
+          scope: input.scope,
+          selectionId: input.scope === "selection" ? activeSelection?.id : undefined,
+          paddingPx: input.scope === "selection" ? paddingPx : undefined,
+          targetLabel: input.scope === "selection" ? input.targetLabel : undefined,
           instruction: input.instruction,
           referenceAssetIds: input.referenceIds,
           model: input.model,
@@ -589,25 +681,24 @@ export function AppShell() {
         setConnectionWarning("Edit queued. Refresh the project to see progress.");
         setPollNow((value) => value + 1);
       }
-      setNotice("Edit queued. The worker will create a child version.");
       return true;
     } catch (cause) {
       clearSubmitKeyOnRejection(operation, cause);
       setError(cause instanceof Error ? cause.message : "Edit enqueue failed.");
       return false;
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
   async function handleCompareSubmit(input: EditFormInput): Promise<boolean> {
     if (projectId === null || snapshot === null || activeVersionId === null) return false;
-    if (activeSelection === null) {
-      setError("A successful SAM selection is required before comparing models.");
+    if (input.scope === "selection" && activeSelection === null) {
+      setError("A successful SAM selection is required before comparing a selection.");
       return false;
     }
 
-    setBusy(true);
+    beginBusy("model comparison");
     setError(null);
     setNotice(null);
     const operation = "comparison";
@@ -616,8 +707,9 @@ export function AppShell() {
       JSON.stringify({
         projectId,
         parentVersionId: activeVersionId,
-        selectionId: activeSelection.id,
-        paddingPx,
+        scope: input.scope,
+        selectionId: input.scope === "selection" ? activeSelection?.id : undefined,
+        paddingPx: input.scope === "selection" ? paddingPx : undefined,
         targetLabel: input.targetLabel,
         instruction: input.instruction,
         referenceIds: input.referenceIds,
@@ -625,7 +717,7 @@ export function AppShell() {
     );
 
     try {
-      await apiRequest<ComparisonResponse>("/api/comparisons", {
+      const response = await apiRequest<ComparisonResponse>("/api/comparisons", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -634,9 +726,10 @@ export function AppShell() {
         body: JSON.stringify({
           projectId,
           parentVersionId: activeVersionId,
-          selectionId: activeSelection.id,
-          paddingPx,
-          targetLabel: input.targetLabel,
+          scope: input.scope,
+          selectionId: input.scope === "selection" ? activeSelection?.id : undefined,
+          paddingPx: input.scope === "selection" ? paddingPx : undefined,
+          targetLabel: input.scope === "selection" ? input.targetLabel : undefined,
           instruction: input.instruction,
           referenceAssetIds: input.referenceIds,
           costConsent: {
@@ -648,25 +741,26 @@ export function AppShell() {
       });
       clearSubmitKey(operation);
       setSelectedEditRunId(null);
-      setSelectedComparisonGroupId(null);
+      setSelectedComparisonGroupId(response.comparisonGroupId);
+      shouldScrollToComparisonRef.current = true;
       try {
         await loadProject(projectId);
       } catch {
         setConnectionWarning("Comparison queued. Refresh the project to see progress.");
         setPollNow((value) => value + 1);
       }
-      setNotice("Comparison queued: Flare and Sunburst share the frozen input.");
       return true;
     } catch (cause) {
       clearSubmitKeyOnRejection(operation, cause);
       setError(cause instanceof Error ? cause.message : "Comparison enqueue failed.");
       return false;
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
   async function handleEvaluation(runId: string, evaluation: Evaluation): Promise<boolean> {
+    beginBusy("evaluation save");
     setError(null);
     setNotice(null);
     try {
@@ -688,13 +782,15 @@ export function AppShell() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Evaluation save failed.");
       return false;
+    } finally {
+      endBusy();
     }
   }
 
   async function handleSelectVersion(versionId: string): Promise<void> {
     if (projectId === null) return;
     selectionRequestSeqRef.current += 1;
-    setBusy(true);
+    beginBusy("version switch");
     setError(null);
     setSelectedEditRunId(null);
     setSelectedComparisonGroupId(null);
@@ -702,8 +798,8 @@ export function AppShell() {
       setSelectionUiVersionId(versionId);
       setSelectionAttemptFailed(false);
       setSelectionMode("positive");
-      setPositivePoint(null);
-      setNegativePoint(null);
+      setPositivePoints([]);
+      setNegativePoints([]);
       setSelectedSelectionId(null);
     }
     try {
@@ -716,7 +812,7 @@ export function AppShell() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Version selection failed.");
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -724,7 +820,7 @@ export function AppShell() {
     if (!generationReady || projectId === null || snapshot === null || generationInput === null) {
       return;
     }
-    setBusy(true);
+    beginBusy("scene generation");
     setError(null);
     setNotice(null);
     const operation = "generate";
@@ -753,16 +849,18 @@ export function AppShell() {
         setConnectionWarning("Generation queued. Refresh the project to see progress.");
         setPollNow((value) => value + 1);
       }
-      setNotice("Generation queued. The worker will install the root when it completes.");
     } catch (cause) {
       clearSubmitKeyOnRejection(operation, cause);
       setError(cause instanceof Error ? cause.message : "Generation enqueue failed.");
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
-  async function enqueueSelection(positive: Point, negative: Point | null): Promise<void> {
+  async function enqueueSelection(
+    nextPositivePoints: Point[],
+    nextNegativePoints: Point[],
+  ): Promise<void> {
     if (projectId === null || snapshot === null || activeVersionId === null) return;
     if (!segmentationAvailable) {
       setError("SAM selection is unavailable.");
@@ -785,7 +883,10 @@ export function AppShell() {
     const operation = "segment";
     const key = submitKey(
       operation,
-      `${startedProjectId}:${startedVersionId}:${JSON.stringify({ positive, negative })}`,
+      `${startedProjectId}:${startedVersionId}:${JSON.stringify({
+        positivePoints: nextPositivePoints,
+        negativePoints: nextNegativePoints,
+      })}`,
     );
 
     try {
@@ -798,8 +899,8 @@ export function AppShell() {
         body: JSON.stringify({
           projectId: startedProjectId,
           sourceVersionId: startedVersionId,
-          positivePoints: [positive],
-          negativePoints: negative === null ? [] : [negative],
+          positivePoints: nextPositivePoints,
+          negativePoints: nextNegativePoints,
           costConsent: {
             pricingVersion,
             reservationUsdMicros: segmentationReservationUsdMicros,
@@ -812,8 +913,8 @@ export function AppShell() {
       setSelectionAttemptFailed(false);
       setPendingSelection({
         sourceVersionId: startedVersionId,
-        positivePoints: [positive],
-        negativePoints: negative === null ? [] : [negative],
+        positivePoints: nextPositivePoints,
+        negativePoints: nextNegativePoints,
         runId: result.runId,
       });
 
@@ -834,7 +935,6 @@ export function AppShell() {
         }
       }
       if (attemptId !== selectionRequestSeqRef.current) return;
-      setNotice("Selection queued. The worker will save the mask.");
     } catch (cause) {
       clearSubmitKeyOnRejection(operation, cause);
       if (attemptId !== selectionRequestSeqRef.current) return;
@@ -847,7 +947,10 @@ export function AppShell() {
     }
   }
 
-  async function handleCanvasSelect(point: Point): Promise<void> {
+  async function handleCanvasSelect(
+    point: Point,
+    modifiers: CanvasSelectionModifiers,
+  ): Promise<void> {
     if (projectId === null || snapshot === null || activeVersionId === null) return;
     if (selectionPending || !segmentationAvailable) return;
 
@@ -856,24 +959,79 @@ export function AppShell() {
     setSelectionSubmitting(null);
     setSelectionAttemptFailed(false);
 
-    if (effectiveSelectionMode === "negative") {
-      const base = displayPositivePoint;
-      if (base === null) return;
-      if (base.x === point.x && base.y === point.y) {
+    const currentPositivePoints = displayPositivePoints;
+    const currentNegativePoints = displayNegativePoints;
+    const containsPoint = (points: readonly Point[], candidate: Point) =>
+      points.some((value) => value.x === candidate.x && value.y === candidate.y);
+    const subtractive = modifiers.subtractive;
+    const additive = modifiers.additive && !subtractive;
+
+    if (subtractive) {
+      if (currentPositivePoints.length === 0) {
+        setError("Place at least one positive point before subtracting.");
+        return;
+      }
+      if (containsPoint(currentPositivePoints, point)) {
         setError("Positive and negative points must differ.");
         return;
       }
-      setPositivePoint(base);
-      setNegativePoint(point);
+      if (containsPoint(currentNegativePoints, point)) return;
+      if (currentNegativePoints.length >= SAM_MAX_POINTS_PER_LABEL) {
+        setError(`At most ${SAM_MAX_POINTS_PER_LABEL} negative points are allowed.`);
+        return;
+      }
+      const nextNegativePoints = [...currentNegativePoints, point];
+      setPositivePoints(currentPositivePoints);
+      setNegativePoints(nextNegativePoints);
       setSelectedSelectionId(null);
-      await enqueueSelection(base, point);
+      await enqueueSelection(currentPositivePoints, nextNegativePoints);
       return;
     }
 
-    setPositivePoint(point);
-    setNegativePoint(null);
+    if (additive) {
+      if (containsPoint(currentNegativePoints, point)) {
+        setError("Positive and negative points must differ.");
+        return;
+      }
+      if (containsPoint(currentPositivePoints, point)) return;
+      if (currentPositivePoints.length >= SAM_MAX_POINTS_PER_LABEL) {
+        setError(`At most ${SAM_MAX_POINTS_PER_LABEL} positive points are allowed.`);
+        return;
+      }
+      const nextPositivePoints = [...currentPositivePoints, point];
+      setPositivePoints(nextPositivePoints);
+      setNegativePoints(currentNegativePoints);
+      setSelectedSelectionId(null);
+      await enqueueSelection(nextPositivePoints, currentNegativePoints);
+      return;
+    }
+
+    if (effectiveSelectionMode === "negative") {
+      if (currentPositivePoints.length === 0) {
+        setError("Place at least one positive point before subtracting.");
+        return;
+      }
+      if (containsPoint(currentPositivePoints, point)) {
+        setError("Positive and negative points must differ.");
+        return;
+      }
+      if (containsPoint(currentNegativePoints, point)) return;
+      if (currentNegativePoints.length >= SAM_MAX_POINTS_PER_LABEL) {
+        setError(`At most ${SAM_MAX_POINTS_PER_LABEL} negative points are allowed.`);
+        return;
+      }
+      const nextNegativePoints = [...currentNegativePoints, point];
+      setPositivePoints(currentPositivePoints);
+      setNegativePoints(nextNegativePoints);
+      setSelectedSelectionId(null);
+      await enqueueSelection(currentPositivePoints, nextNegativePoints);
+      return;
+    }
+
+    setPositivePoints([point]);
+    setNegativePoints([]);
     setSelectedSelectionId(null);
-    await enqueueSelection(point, null);
+    await enqueueSelection([point], []);
   }
 
   function handleModeChange(mode: "positive" | "negative"): void {
@@ -889,15 +1047,15 @@ export function AppShell() {
     setSelectionSubmitting(null);
     setSelectionAttemptFailed(false);
     setSelectedSelectionId(selectionId);
-    setPositivePoint(null);
-    setNegativePoint(null);
+    setPositivePoints([]);
+    setNegativePoints([]);
     setSelectionMode("positive");
   }
 
   async function handleOpenEditRun(run: RunSummaryDto): Promise<void> {
     if (projectId === null) return;
     selectionRequestSeqRef.current += 1;
-    setBusy(true);
+    beginBusy("run history");
     setError(null);
     try {
       if (run.parentVersionId !== null && run.parentVersionId !== activeVersionId) {
@@ -913,7 +1071,7 @@ export function AppShell() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Run history could not be opened.");
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -923,7 +1081,7 @@ export function AppShell() {
   }): Promise<void> {
     if (projectId === null) return;
     selectionRequestSeqRef.current += 1;
-    setBusy(true);
+    beginBusy("comparison history");
     setError(null);
     try {
       const parentVersionId = group.runs.find((run) => run.parentVersionId !== null)?.parentVersionId ?? null;
@@ -936,11 +1094,12 @@ export function AppShell() {
       }
       setSelectedComparisonGroupId(group.id);
       setSelectedEditRunId(null);
+      shouldScrollToComparisonRef.current = true;
       await loadProject(projectId);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Comparison history could not be opened.");
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -955,7 +1114,7 @@ export function AppShell() {
       return;
     }
     const retryReservation = run.retryMode === "local" ? 0 : run.retryReservationUsdMicros;
-    setBusy(true);
+    beginBusy("retry");
     setError(null);
     setNotice(null);
     const operation = `retry:${run.id}`;
@@ -989,20 +1148,21 @@ export function AppShell() {
           projectId,
           sourceVersionId: run.segmentInput.sourceVersionId,
         });
+        setPositivePoints(run.segmentInput.positivePoints);
+        setNegativePoints(run.segmentInput.negativePoints);
         setSelectedSelectionId(null);
-        }
+      }
       try {
         await loadProject(projectId);
       } catch {
         setConnectionWarning("Retry queued. Refresh the project to see progress.");
         setPollNow((value) => value + 1);
       }
-      setNotice("Retry queued.");
     } catch (cause) {
       clearSubmitKeyOnRejection(operation, cause);
       setError(cause instanceof Error ? cause.message : "Retry failed.");
     } finally {
-      setBusy(false);
+      endBusy();
     }
   }
 
@@ -1033,6 +1193,27 @@ export function AppShell() {
           </div>
         </div>
       </header>
+
+      <ActionFeed running={runningActions} flashes={flashes} onDismiss={dismiss} />
+
+      {latestComparisonGroup !== null ? (
+        <section
+          ref={comparisonRef}
+          className="mx-auto w-full max-w-7xl scroll-mt-16 px-4 pt-4"
+        >
+          <ComparisonPanel
+            key={latestComparisonGroup.id}
+            groupId={latestComparisonGroup.id}
+            runs={latestComparisonGroup.runs}
+            versions={snapshot?.versions ?? []}
+            busy={busy}
+            remainingBudgetUsdMicros={costs?.totals.remainingUsdMicros ?? null}
+            onRetry={(run) => void handleRetry(run)}
+            onContinue={(versionId) => void handleSelectVersion(versionId)}
+            onEvaluation={handleEvaluation}
+          />
+        </section>
+      ) : null}
 
       <main className="mx-auto grid max-w-7xl gap-4 p-4 lg:grid-cols-[300px_minmax(0,1fr)_320px]">
         <aside className="min-w-0 space-y-4">
@@ -1466,28 +1647,14 @@ export function AppShell() {
               maskOpacity={maskOpacity}
               allowedVisible={allowedVisible}
               disabled={selectionPending || !segmentationAvailable}
-              positivePoint={displayPositivePoint}
-              negativePoint={displayNegativePoint}
-              onSelect={(point) => void handleCanvasSelect(point)}
+              positivePoints={displayPositivePoints}
+              negativePoints={displayNegativePoints}
+              onSelect={(point, modifiers) => void handleCanvasSelect(point, modifiers)}
             />
           )}
         </section>
 
         <aside className="min-w-0 space-y-4">
-          {error !== null ? (
-            <div role="alert" className="rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-800">
-              {error}
-            </div>
-          ) : null}
-          {notice !== null ? (
-            <div
-              role="status"
-              aria-live="polite"
-              className="rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-800"
-            >
-              {notice}
-            </div>
-          ) : null}
           {connectionWarning !== null ? (
             <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
               {connectionWarning}
@@ -1509,8 +1676,8 @@ export function AppShell() {
             latestRun={latestSegmentRun}
             mode={effectiveSelectionMode}
             onModeChange={handleModeChange}
-            positivePoint={displayPositivePoint}
-            negativePoint={displayNegativePoint}
+            positivePoints={displayPositivePoints}
+            negativePoints={displayNegativePoints}
             paddingPx={paddingPx}
             onPaddingChange={setPaddingPx}
             maskVisible={maskVisible}
@@ -1552,20 +1719,6 @@ export function AppShell() {
             onContinue={(versionId) => void handleSelectVersion(versionId)}
             onEvaluation={handleEvaluation}
           />
-
-          {latestComparisonGroup !== null ? (
-            <ComparisonPanel
-              key={latestComparisonGroup.id}
-              groupId={latestComparisonGroup.id}
-              runs={latestComparisonGroup.runs}
-              versions={snapshot?.versions ?? []}
-              busy={busy}
-              remainingBudgetUsdMicros={costs?.totals.remainingUsdMicros ?? null}
-              onRetry={(run) => void handleRetry(run)}
-              onContinue={(versionId) => void handleSelectVersion(versionId)}
-              onEvaluation={handleEvaluation}
-            />
-          ) : null}
 
           {latestGenerationRun !== null ? (
             <section className="rounded-xl border border-stone-300 bg-white p-4">

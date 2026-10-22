@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import { AppError } from "../errors";
+import type { Point } from "../contracts/domain";
 import {
   CANONICAL_SIZE,
   decodeRgb,
@@ -81,55 +82,80 @@ export async function mockEdit(input: ImageAdapterInput): Promise<ImageAdapterRe
 }
 
 export function buildMockMask(input: {
-  positive: { x: number; y: number };
-  negative: { x: number; y: number } | null;
+  positivePoints: readonly Point[];
+  negativePoints: readonly Point[];
   size?: number;
 }): Uint8Array {
   const size = input.size ?? CANONICAL_SIZE;
-  const { positive, negative } = input;
+  const { positivePoints, negativePoints } = input;
 
-  if (
-    !Number.isInteger(positive.x) ||
-    !Number.isInteger(positive.y) ||
-    positive.x < 0 ||
-    positive.y < 0 ||
-    positive.x >= size ||
-    positive.y >= size
-  ) {
-    throw new AppError(400, "INVALID_POINT", "Positive point is outside the canonical image.");
-  }
-  if (negative !== null) {
-    if (
-      !Number.isInteger(negative.x) ||
-      !Number.isInteger(negative.y) ||
-      negative.x < 0 ||
-      negative.y < 0 ||
-      negative.x >= size ||
-      negative.y >= size
-    ) {
-      throw new AppError(400, "INVALID_POINT", "Negative point is outside the canonical image.");
-    }
-    if (negative.x === positive.x && negative.y === positive.y) {
-      throw new AppError(400, "INVALID_POINT", "Positive and negative points must differ.");
-    }
+  if (positivePoints.length === 0) {
+    throw new AppError(400, "INVALID_POINT", "At least one positive point is required.");
   }
 
-  const left = Math.max(0, positive.x - 64);
-  const right = Math.min(size, positive.x + 65);
-  const top = Math.max(0, positive.y - 64);
-  const bottom = Math.min(size, positive.y + 65);
+  const seen = new Map<string, "positive" | "negative">();
+  for (const [label, points] of [
+    ["positive", positivePoints],
+    ["negative", negativePoints],
+  ] as const) {
+    for (const point of points) {
+      if (
+        !Number.isInteger(point.x) ||
+        !Number.isInteger(point.y) ||
+        point.x < 0 ||
+        point.y < 0 ||
+        point.x >= size ||
+        point.y >= size
+      ) {
+        throw new AppError(
+          400,
+          "INVALID_POINT",
+          `${label === "positive" ? "Positive" : "Negative"} point is outside the canonical image.`,
+        );
+      }
+      const key = `${point.x},${point.y}`;
+      const existing = seen.get(key);
+      if (existing !== undefined) {
+        throw new AppError(
+          400,
+          "INVALID_POINT",
+          existing === label
+            ? "Points must be unique."
+            : "Positive and negative points must differ.",
+        );
+      }
+      seen.set(key, label);
+    }
+  }
+
+  let left = size;
+  let right = 0;
+  let top = size;
+  let bottom = 0;
+  for (const point of positivePoints) {
+    left = Math.min(left, point.x - 64);
+    right = Math.max(right, point.x + 65);
+    top = Math.min(top, point.y - 64);
+    bottom = Math.max(bottom, point.y + 65);
+  }
+  left = Math.max(0, left);
+  right = Math.min(size, right);
+  top = Math.max(0, top);
+  bottom = Math.min(size, bottom);
+
   const cropWidth = right - left;
   const cropHeight = bottom - top;
   const raster = new Uint8Array(cropWidth * cropHeight).fill(1);
 
-  if (
-    negative !== null &&
-    negative.x >= left &&
-    negative.x < right &&
-    negative.y >= top &&
-    negative.y < bottom
-  ) {
-    raster[(negative.y - top) * cropWidth + (negative.x - left)] = 0;
+  for (const negative of negativePoints) {
+    if (
+      negative.x >= left &&
+      negative.x < right &&
+      negative.y >= top &&
+      negative.y < bottom
+    ) {
+      raster[(negative.y - top) * cropWidth + (negative.x - left)] = 0;
+    }
   }
 
   const pasted = pasteCroppedMask({
@@ -142,8 +168,8 @@ export function buildMockMask(input: {
     mask: pasted.mask,
     width: size,
     height: size,
-    positive,
-    negative,
+    positivePoints,
+    negativePoints,
   });
   return pasted.mask;
 }
@@ -154,8 +180,8 @@ export async function mockSegment(input: SegmentationAdapterInput): Promise<Segm
   }
   await inspectImage(input.image);
   const fullMask = buildMockMask({
-    positive: input.positive,
-    negative: input.negative,
+    positivePoints: input.positivePoints,
+    negativePoints: input.negativePoints,
     size: input.width,
   });
 

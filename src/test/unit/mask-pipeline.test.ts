@@ -180,8 +180,8 @@ describe("full-frame SAM mask validation", () => {
       records: [record],
       frameWidth: 320,
       frameHeight: 334,
-      positive: { x: 180, y: 240 },
-      negative: null,
+      positivePoints: [{ x: 180, y: 240 }],
+      negativePoints: [],
     });
 
     expect(full.width).toBe(320);
@@ -200,8 +200,8 @@ describe("full-frame SAM mask validation", () => {
         records: [record],
         frameWidth: 320,
         frameHeight: 334,
-        positive: { x: 10, y: 10 },
-        negative: null,
+        positivePoints: [{ x: 10, y: 10 }],
+        negativePoints: [],
       }),
     ).toThrow("positive point");
 
@@ -210,8 +210,8 @@ describe("full-frame SAM mask validation", () => {
         records: [record],
         frameWidth: 320,
         frameHeight: 334,
-        positive: { x: 180, y: 240 },
-        negative: { x: 180, y: 241 },
+        positivePoints: [{ x: 180, y: 240 }],
+        negativePoints: [{ x: 180, y: 241 }],
       }),
     ).toThrow("negative point");
   });
@@ -223,8 +223,8 @@ describe("full-frame SAM mask validation", () => {
         records: [{ ...record, objectId: "0" }],
         frameWidth: 320,
         frameHeight: 334,
-        positive: { x: 180, y: 240 },
-        negative: null,
+        positivePoints: [{ x: 180, y: 240 }],
+        negativePoints: [],
       }),
     ).toThrow("prompted object");
 
@@ -233,8 +233,8 @@ describe("full-frame SAM mask validation", () => {
         records: [record, { ...record }],
         frameWidth: 320,
         frameHeight: 334,
-        positive: { x: 180, y: 240 },
-        negative: null,
+        positivePoints: [{ x: 180, y: 240 }],
+        negativePoints: [],
       }),
     ).toThrow("duplicate");
 
@@ -243,8 +243,8 @@ describe("full-frame SAM mask validation", () => {
         records: [{ ...record, bounds: { ...record.bounds, right: record.bounds.right + 1 } }],
         frameWidth: 320,
         frameHeight: 334,
-        positive: { x: 180, y: 240 },
-        negative: null,
+        positivePoints: [{ x: 180, y: 240 }],
+        negativePoints: [],
       }),
     ).toThrow("do not agree");
 
@@ -253,8 +253,8 @@ describe("full-frame SAM mask validation", () => {
         records: [record],
         frameWidth: 200,
         frameHeight: 200,
-        positive: { x: 180, y: 150 },
-        negative: null,
+        positivePoints: [{ x: 180, y: 150 }],
+        negativePoints: [],
       }),
     ).toThrow("inside the frame");
   });
@@ -265,8 +265,8 @@ describe("full-frame SAM mask validation", () => {
         mask: new Uint8Array(4),
         width: 2,
         height: 2,
-        positive: { x: 0, y: 0 },
-        negative: null,
+        positivePoints: [{ x: 0, y: 0 }],
+        negativePoints: [],
       }),
     ).toThrow("empty mask");
 
@@ -275,8 +275,8 @@ describe("full-frame SAM mask validation", () => {
         mask: Uint8Array.from([0, 0, 2, 0]),
         width: 2,
         height: 2,
-        positive: { x: 2, y: 2 },
-        negative: null,
+        positivePoints: [{ x: 2, y: 2 }],
+        negativePoints: [],
       }),
     ).toThrow("binary");
   });

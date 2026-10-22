@@ -64,10 +64,10 @@ function validateSamCaptureDetails(
     return { reason: "SAM capture model does not match the configured model.", fullMask: null };
   }
   if (!samePoints(capture.positivePoints, request.positivePoints)) {
-    return { reason: "SAM capture does not match the positive point.", fullMask: null };
+    return { reason: "SAM capture does not match the positive points.", fullMask: null };
   }
   if (!samePoints(capture.negativePoints, request.negativePoints)) {
-    return { reason: "SAM capture does not match the negative point.", fullMask: null };
+    return { reason: "SAM capture does not match the negative points.", fullMask: null };
   }
 
   try {
@@ -75,8 +75,8 @@ function validateSamCaptureDetails(
       records: capture.records,
       frameWidth: capture.width,
       frameHeight: capture.height,
-      positive: capture.positivePoints[0],
-      negative: capture.negativePoints[0] ?? null,
+      positivePoints: capture.positivePoints,
+      negativePoints: capture.negativePoints,
     });
     return { reason: null, fullMask };
   } catch {
@@ -159,8 +159,8 @@ export function replaySamCapture(
         records: capture.records,
         frameWidth: capture.width,
         frameHeight: capture.height,
-        positive: capture.positivePoints[0],
-        negative: capture.negativePoints[0] ?? null,
+        positivePoints: capture.positivePoints,
+        negativePoints: capture.negativePoints,
       }),
   };
 }

@@ -91,6 +91,7 @@ async function enqueueLiveEdit(input: {
     env,
     projectId: input.projectId,
     parentVersionId: input.rootVersionId,
+    scope: "selection",
     selectionId: input.selectionId,
     paddingPx: 16,
     targetLabel: "sofa",

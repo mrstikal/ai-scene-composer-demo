@@ -57,35 +57,51 @@ describe("deterministic mock adapters", () => {
   });
 
   it("builds a cropped centered mask with half-open bounds and clears a negative pixel", () => {
-    const mask = buildMockMask({ positive: { x: 512, y: 512 }, negative: null });
+    const mask = buildMockMask({ positivePoints: [{ x: 512, y: 512 }], negativePoints: [] });
     const count = mask.reduce((sum, value) => sum + value, 0);
     expect(count).toBe(129 * 129);
 
     const corrected = buildMockMask({
-      positive: { x: 512, y: 512 },
-      negative: { x: 520, y: 520 },
+      positivePoints: [{ x: 512, y: 512 }],
+      negativePoints: [{ x: 520, y: 520 }],
     });
     expect(corrected.reduce((sum, value) => sum + value, 0)).toBe(129 * 129 - 1);
     expect(corrected[520 * 1024 + 520]).toBe(0);
 
-    const edge = buildMockMask({ positive: { x: 0, y: 0 }, negative: null });
+    const edge = buildMockMask({ positivePoints: [{ x: 0, y: 0 }], negativePoints: [] });
     expect(edge.reduce((sum, value) => sum + value, 0)).toBe(65 * 65);
 
-    const oppositeEdge = buildMockMask({ positive: { x: 1023, y: 1023 }, negative: null });
+    const oppositeEdge = buildMockMask({ positivePoints: [{ x: 1023, y: 1023 }], negativePoints: [] });
     expect(oppositeEdge.reduce((sum, value) => sum + value, 0)).toBe(65 * 65);
+  });
+
+  it("covers every positive point and clears every negative point", () => {
+    const mask = buildMockMask({
+      positivePoints: [
+        { x: 256, y: 256 },
+        { x: 768, y: 768 },
+      ],
+      negativePoints: [{ x: 512, y: 512 }],
+    });
+    expect(mask[256 * 1024 + 256]).toBe(1);
+    expect(mask[768 * 1024 + 768]).toBe(1);
+    expect(mask[512 * 1024 + 512]).toBe(0);
   });
 
   it("rejects identical or out-of-range points", () => {
     expect(() =>
-      buildMockMask({ positive: { x: 10, y: 10 }, negative: { x: 10, y: 10 } }),
+      buildMockMask({
+        positivePoints: [{ x: 10, y: 10 }],
+        negativePoints: [{ x: 10, y: 10 }],
+      }),
     ).toThrow("Positive and negative points must differ.");
-    expect(() => buildMockMask({ positive: { x: 1024, y: 10 }, negative: null })).toThrow(
+    expect(() => buildMockMask({ positivePoints: [{ x: 1024, y: 10 }], negativePoints: [] })).toThrow(
       "Positive point is outside the canonical image.",
     );
   });
 
   it("encodes a binary full-frame mask as 0/255 grayscale PNG", async () => {
-    const mask = buildMockMask({ positive: { x: 512, y: 512 }, negative: null });
+    const mask = buildMockMask({ positivePoints: [{ x: 512, y: 512 }], negativePoints: [] });
     const png = await maskToGrayscalePng(mask, 1024, 1024);
     const metadata = await sharp(png).metadata();
     expect(metadata.width).toBe(1024);
@@ -103,8 +119,8 @@ describe("deterministic mock adapters", () => {
       image: source,
       width: 1024,
       height: 1024,
-      positive: { x: 100, y: 100 },
-      negative: null,
+      positivePoints: [{ x: 100, y: 100 }],
+      negativePoints: [],
       prompt: "segment object 1",
     });
     if (result.kind !== "mask") throw new Error("Expected a mock mask.");

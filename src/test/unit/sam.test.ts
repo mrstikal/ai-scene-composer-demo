@@ -7,8 +7,8 @@ import documented from "@/test/fixtures/providers/sam/documented-complete-output
 const documentedInput = {
   width: 320,
   height: 334,
-  positive: { x: 180, y: 240 },
-  negative: null,
+  positivePoints: [{ x: 180, y: 240 }],
+  negativePoints: [],
 };
 
 async function* eventStream(
@@ -59,8 +59,8 @@ describe("SAM prompt construction", () => {
       buildSamPrompt({
         width: 1024,
         height: 1024,
-        positive: { x: 100, y: 200 },
-        negative: null,
+        positivePoints: [{ x: 100, y: 200 }],
+        negativePoints: [],
       }),
     ).toBe("<0f>1<|point;x=100;y=200;w=1024;h=1024|>");
   });
@@ -70,11 +70,27 @@ describe("SAM prompt construction", () => {
       buildSamPrompt({
         width: 1024,
         height: 1024,
-        positive: { x: 100, y: 200 },
-        negative: { x: 300, y: 400 },
+        positivePoints: [{ x: 100, y: 200 }],
+        negativePoints: [{ x: 300, y: 400 }],
       }),
     ).toBe(
       "<0f>1<|point;x=100;y=200;w=1024;h=1024|>-<|point;x=300;y=400;w=1024;h=1024|>",
+    );
+  });
+
+  it("builds the official object prompt for multiple positive and negative points", () => {
+    expect(
+      buildSamPrompt({
+        width: 1024,
+        height: 1024,
+        positivePoints: [
+          { x: 100, y: 200 },
+          { x: 400, y: 200 },
+        ],
+        negativePoints: [{ x: 300, y: 400 }],
+      }),
+    ).toBe(
+      "<0f>1<|point;x=100;y=200;w=1024;h=1024|><|point;x=400;y=200;w=1024;h=1024|>-<|point;x=300;y=400;w=1024;h=1024|>",
     );
   });
 });
@@ -136,7 +152,19 @@ describe("SAM stream parsing and mask placement", () => {
   it("rejects a completed response whose mask does not cover the positive point", async () => {
     const result = await parseSamEvents(eventStream(documentedEvents()), {
       ...documentedInput,
-      positive: { x: 10, y: 10 },
+      positivePoints: [{ x: 10, y: 10 }],
+    });
+    if (result.kind !== "invalid") throw new Error(`Expected invalid selection, got ${result.kind}.`);
+    expect(result.message).toContain("positive point");
+  });
+
+  it("validates every positive point in a multi-point response", async () => {
+    const result = await parseSamEvents(eventStream(documentedEvents()), {
+      ...documentedInput,
+      positivePoints: [
+        { x: 180, y: 240 },
+        { x: 10, y: 10 },
+      ],
     });
     if (result.kind !== "invalid") throw new Error(`Expected invalid selection, got ${result.kind}.`);
     expect(result.message).toContain("positive point");
@@ -145,7 +173,7 @@ describe("SAM stream parsing and mask placement", () => {
   it("rejects a completed response whose mask covers the negative point", async () => {
     const result = await parseSamEvents(eventStream(documentedEvents()), {
       ...documentedInput,
-      negative: { x: 180, y: 241 },
+      negativePoints: [{ x: 180, y: 241 }],
     });
     if (result.kind !== "invalid") throw new Error(`Expected invalid selection, got ${result.kind}.`);
     expect(result.message).toContain("negative point");
