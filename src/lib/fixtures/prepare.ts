@@ -8,6 +8,7 @@ import { sha256Hex } from "../assets/store";
 import type { FixtureEntry, FixtureManifest } from "../config/fixtures";
 import { inspectImage, normalizeBase, normalizeReference, type NormalizedImage } from "../images/normalize";
 import { AppError } from "../errors";
+import { samFixtureStatusAtRoot } from "../sam/capture";
 
 export const SYNTHETIC_GENERATOR = "prepare-fixtures";
 export const SYNTHETIC_GENERATOR_VERSION = "synthetic-v1";
@@ -195,9 +196,7 @@ export async function prepareFixtures(fixturesRoot: string): Promise<FixtureMani
     licensedPhotosReady: [livingRoom, referenceSofa].every(
       (fixture) => fixture.provenance === "licensed_photo" && fixture.licenseRecord !== null,
     ),
-    samFixtureReady:
-      existsSync(join(fixturesRoot, "sam", "living-room-v1.positive.json")) &&
-      existsSync(join(fixturesRoot, "sam", "living-room-v1.negative.json")),
+    samFixtureReady: samFixtureStatusAtRoot(fixturesRoot, livingRoom.normalizedSha256).ready,
   };
 
   const manifestPath = join(fixturesRoot, "manifest.json");

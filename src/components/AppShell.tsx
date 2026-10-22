@@ -1,12 +1,17 @@
 "use client";
 
-import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { SCENE_PRESETS, type ScenePresetId } from "@/config/scene-presets";
+import { EditPanel, type EditFormInput } from "@/components/editor/EditPanel";
+import { SceneCanvas } from "@/components/editor/SceneCanvas";
+import { SelectionPanel } from "@/components/editor/SelectionPanel";
+import type { MaskPaddingPx, Point } from "@/lib/contracts/domain";
+import { shouldApplySelection, type PendingSelectionRequest } from "@/lib/ui/selection-guard";
 import { createSubmitKeyStore } from "@/lib/ui/submit-keys";
 import type {
   AssetUploadResponse,
+  EditResponse,
   GenerationInput,
   GenerationResponse,
   HealthResponse,
@@ -15,6 +20,7 @@ import type {
   RetryResponse,
   RunSummaryDto,
   SampleImportResponse,
+  SegmentationResponse,
 } from "@/lib/contracts/api";
 
 class ApiRequestError extends Error {
@@ -74,7 +80,26 @@ export function AppShell() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [connectionWarning, setConnectionWarning] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState<"positive" | "negative">("positive");
+  const [positivePoint, setPositivePoint] = useState<Point | null>(null);
+  const [negativePoint, setNegativePoint] = useState<Point | null>(null);
+  const [selectedSelectionId, setSelectedSelectionId] = useState<string | null>(null);
+  const [selectionUiVersionId, setSelectionUiVersionId] = useState<string | null>(null);
+  const [paddingPx, setPaddingPx] = useState<MaskPaddingPx>(16);
+  const [maskVisible, setMaskVisible] = useState(true);
+  const [maskOpacity, setMaskOpacity] = useState(0.35);
+  const [allowedVisible, setAllowedVisible] = useState(true);
+  const [pendingSelection, setPendingSelection] = useState<
+    (PendingSelectionRequest & { runId: string }) | null
+  >(null);
+  const [selectionSubmitting, setSelectionSubmitting] = useState<{
+    projectId: string;
+    sourceVersionId: string;
+  } | null>(null);
+  const [pollNow, setPollNow] = useState(0);
   const submitKeys = useRef(createSubmitKeyStore());
+  const currentProjectIdRef = useRef<string | null>(null);
+  const selectionInFlightRef = useRef<string | null>(null);
 
   function submitKey(operation: string, signature: string): string {
     return submitKeys.current.keyFor(operation, signature);
@@ -86,6 +111,7 @@ export function AppShell() {
 
   const loadProject = useCallback(async (id: string) => {
     const next = await apiRequest<ProjectSnapshotDto>(`/api/projects/${id}`);
+    currentProjectIdRef.current = id;
     setProjectId(id);
     setSnapshot(next);
     window.history.replaceState(null, "", `/?project=${id}`);
@@ -118,6 +144,7 @@ export function AppShell() {
             : null) ?? nextProjects.projects[0]?.id ?? null;
 
         if (selected === null) {
+          currentProjectIdRef.current = null;
           setProjectId(null);
           setSnapshot(null);
           return;
@@ -125,6 +152,7 @@ export function AppShell() {
 
         const next = await apiRequest<ProjectSnapshotDto>(`/api/projects/${selected}`);
         if (cancelled) return;
+        currentProjectIdRef.current = selected;
         setProjectId(selected);
         setSnapshot(next);
         window.history.replaceState(null, "", `/?project=${selected}`);
@@ -143,6 +171,7 @@ export function AppShell() {
 
   const activeVersion =
     snapshot?.versions.find((version) => version.id === snapshot.project.activeVersionId) ?? null;
+  const activeVersionId = activeVersion?.id ?? null;
   const activeProvenance = activeVersion === null ? null : versionProvenance(activeVersion);
   const latestGenerationRun =
     snapshot?.runs.filter((run) => run.kind === "generate").at(-1) ?? null;
@@ -152,6 +181,107 @@ export function AppShell() {
   const imageReservationUsdMicros = mockMode
     ? 0
     : snapshot?.pricing.reservations.imageUsdMicros ?? 0;
+  const segmentationReservationUsdMicros =
+    snapshot?.pricing.reservations.segmentationUsdMicros ?? 0;
+  const segmentationAvailable = health?.providers.segmentation.available ?? false;
+  const segmentationReason = health?.providers.segmentation.reason ?? null;
+
+  const selectionStateMatches = selectionUiVersionId === activeVersionId;
+  const effectiveSelectionMode = selectionStateMatches ? selectionMode : "positive";
+  const effectivePositivePoint = selectionStateMatches ? positivePoint : null;
+  const effectiveNegativePoint = selectionStateMatches ? negativePoint : null;
+
+  const selectionsForActive =
+    activeVersionId === null
+      ? []
+      : snapshot?.selections.filter(
+          (selection) => selection.sourceVersionId === activeVersionId,
+        ) ?? [];
+  const latestSelection = selectionsForActive.at(-1) ?? null;
+
+  const segmentRunsForActive =
+    activeVersionId === null
+      ? []
+      : snapshot?.runs.filter(
+          (run) => run.kind === "segment" && run.parentVersionId === activeVersionId,
+        ) ?? [];
+  const pendingSegmentRun =
+    segmentRunsForActive
+      .filter((run) => run.status === "queued" || run.status === "running")
+      .at(-1) ?? null;
+  const latestSegmentRun = segmentRunsForActive.at(-1) ?? null;
+
+  const editRunsForActive =
+    activeVersionId === null
+      ? []
+      : snapshot?.runs.filter(
+          (run) => run.kind === "edit" && run.parentVersionId === activeVersionId,
+        ) ?? [];
+  const latestEditRun = editRunsForActive.at(-1) ?? null;
+  const editProviderAvailable = health?.providers.images.available ?? false;
+  const editProviderReason = health?.providers.images.reason ?? null;
+  const editReservationUsdMicros = mockMode ? 0 : imageReservationUsdMicros;
+
+  const pendingRunForRequest =
+    pendingSelection === null
+      ? null
+      : snapshot?.runs.find((run) => run.id === pendingSelection.runId) ?? null;
+  const pendingRunTerminal =
+    pendingRunForRequest !== null &&
+    pendingRunForRequest.status !== "queued" &&
+    pendingRunForRequest.status !== "running";
+  const pendingSelectionResult =
+    pendingRunForRequest === null || pendingRunForRequest.outputSelectionId === null
+      ? null
+      : snapshot?.selections.find(
+          (selection) => selection.id === pendingRunForRequest.outputSelectionId,
+        ) ?? null;
+  const pendingGuardPasses =
+    pendingRunTerminal &&
+    pendingSelection !== null &&
+    pendingRunForRequest !== null &&
+    shouldApplySelection({
+      activeVersionId,
+      pending: pendingSelection,
+      run: pendingRunForRequest,
+      selection: pendingSelectionResult,
+    });
+  const pendingGuardFailedForActiveVersion =
+    pendingRunTerminal &&
+    pendingSelection !== null &&
+    pendingSelection.sourceVersionId === activeVersionId &&
+    !pendingGuardPasses;
+
+  const effectiveSelectedSelectionId = pendingGuardPasses
+    ? pendingRunForRequest?.outputSelectionId ?? null
+    : selectionStateMatches
+      ? selectedSelectionId
+      : null;
+  const selectedSelection =
+    effectiveSelectedSelectionId === null
+      ? null
+      : selectionsForActive.find(
+          (selection) => selection.id === effectiveSelectedSelectionId,
+        ) ?? null;
+  const activeSelection =
+    pendingGuardFailedForActiveVersion ? null : selectedSelection ?? latestSelection;
+
+  const submittingThisView =
+    selectionSubmitting !== null &&
+    selectionSubmitting.projectId === projectId &&
+    selectionSubmitting.sourceVersionId === activeVersionId &&
+    !pendingRunTerminal;
+  const selectionPending = submittingThisView || pendingSegmentRun !== null;
+  const displaySelection = selectionPending ? null : activeSelection;
+  const displayPositivePoint =
+    effectivePositivePoint ?? displaySelection?.positivePoints[0] ?? null;
+  const displayNegativePoint =
+    effectiveNegativePoint ?? displaySelection?.negativePoints[0] ?? null;
+  const activeVariant =
+    displaySelection === null
+      ? null
+      : displaySelection.regions.variants[String(paddingPx) as "16" | "32"];
+
   const selectedPreset =
     selectedPresetId === null
       ? null
@@ -175,7 +305,7 @@ export function AppShell() {
     (health?.worker.status === "missing" || health?.worker.status === "stale");
 
   useEffect(() => {
-    if (projectId === null || !hasActiveRuns) return;
+    if (projectId === null || (!hasActiveRuns && pollNow === 0)) return;
 
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -193,6 +323,7 @@ export function AppShell() {
         if (cancelled) return;
         setSnapshot(nextSnapshot);
         setHealth(nextHealth);
+        setPollNow(0);
         setConnectionWarning(null);
         delay = 1500;
       } catch (cause) {
@@ -215,7 +346,7 @@ export function AppShell() {
       controller.abort();
       if (timer !== null) clearTimeout(timer);
     };
-  }, [projectId, hasActiveRuns]);
+  }, [projectId, hasActiveRuns, pollNow]);
 
   async function handleCreateProject(): Promise<void> {
     setBusy(true);
@@ -229,6 +360,11 @@ export function AppShell() {
         body: JSON.stringify(body),
       });
       setTitle("");
+      setSelectionUiVersionId(null);
+      setSelectionMode("positive");
+      setPositivePoint(null);
+      setNegativePoint(null);
+      setSelectedSelectionId(null);
       await refreshProjects();
       await loadProject(result.projectId);
       setNotice("Project created. Choose a sample or upload a base image.");
@@ -243,6 +379,11 @@ export function AppShell() {
     setBusy(true);
     setError(null);
     setNotice(null);
+    setSelectionUiVersionId(null);
+    setSelectionMode("positive");
+    setPositivePoint(null);
+    setNegativePoint(null);
+    setSelectedSelectionId(null);
     try {
       await loadProject(nextId);
     } catch (cause) {
@@ -315,10 +456,123 @@ export function AppShell() {
     }
   }
 
+  async function handleUploadReference(file: File): Promise<string | null> {
+    if (projectId === null) return null;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const operation = "reference-upload";
+    const key = submitKey(
+      operation,
+      `${projectId}:${file.name}:${file.size}:${file.lastModified}`,
+    );
+    try {
+      const form = new FormData();
+      form.set("projectId", projectId);
+      form.set("role", "reference");
+      form.set("file", file);
+      const result = await apiRequest<AssetUploadResponse>("/api/assets", {
+        method: "POST",
+        headers: { "Idempotency-Key": key },
+        body: form,
+      });
+      clearSubmitKey(operation);
+      try {
+        await loadProject(projectId);
+      } catch {
+        setConnectionWarning("Reference uploaded. Refresh the project to see it in the picker.");
+        setPollNow((value) => value + 1);
+      }
+      setNotice("Reference image uploaded.");
+      return result.assetId;
+    } catch (cause) {
+      if (cause instanceof ApiRequestError) clearSubmitKey(operation);
+      setError(cause instanceof Error ? cause.message : "Reference upload failed.");
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleEditSubmit(input: EditFormInput): Promise<boolean> {
+    if (projectId === null || snapshot === null || activeVersionId === null) return false;
+    if (activeSelection === null) {
+      setError("A successful SAM selection is required before editing.");
+      return false;
+    }
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const operation = "edit";
+    const key = submitKey(
+      operation,
+      JSON.stringify({
+        projectId,
+        parentVersionId: activeVersionId,
+        selectionId: activeSelection.id,
+        paddingPx,
+        targetLabel: input.targetLabel,
+        instruction: input.instruction,
+        referenceIds: input.referenceIds,
+        model: input.model,
+        pricingVersion: snapshot.pricing.version,
+        reservation: editReservationUsdMicros,
+      }),
+    );
+
+    try {
+      await apiRequest<EditResponse>("/api/edits", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": key,
+        },
+        body: JSON.stringify({
+          projectId,
+          parentVersionId: activeVersionId,
+          selectionId: activeSelection.id,
+          paddingPx,
+          targetLabel: input.targetLabel,
+          instruction: input.instruction,
+          referenceAssetIds: input.referenceIds,
+          model: input.model,
+          costConsent: {
+            pricingVersion: snapshot.pricing.version,
+            reservationUsdMicros: editReservationUsdMicros,
+            acknowledged: true,
+          },
+        }),
+      });
+      clearSubmitKey(operation);
+      try {
+        await loadProject(projectId);
+      } catch {
+        setConnectionWarning("Edit queued. Refresh the project to see progress.");
+        setPollNow((value) => value + 1);
+      }
+      setNotice("Edit queued. The worker will create a child version.");
+      return true;
+    } catch (cause) {
+      if (cause instanceof ApiRequestError) clearSubmitKey(operation);
+      setError(cause instanceof Error ? cause.message : "Edit enqueue failed.");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleSelectVersion(versionId: string): Promise<void> {
     if (projectId === null) return;
     setBusy(true);
     setError(null);
+    if (versionId !== activeVersionId) {
+      setSelectionUiVersionId(versionId);
+      setSelectionMode("positive");
+      setPositivePoint(null);
+      setNegativePoint(null);
+      setSelectedSelectionId(null);
+    }
     try {
       await apiRequest(`/api/projects/${projectId}/active-version`, {
         method: "PATCH",
@@ -373,10 +627,121 @@ export function AppShell() {
     }
   }
 
+  async function enqueueSelection(positive: Point, negative: Point | null): Promise<void> {
+    if (projectId === null || snapshot === null || activeVersionId === null) return;
+    if (!segmentationAvailable) {
+      setError("SAM selection is unavailable.");
+      return;
+    }
+
+    const scopeKey = `${projectId}:${activeVersionId}`;
+    if (selectionInFlightRef.current === scopeKey) return;
+    selectionInFlightRef.current = scopeKey;
+
+    const startedProjectId = projectId;
+    const startedVersionId = activeVersionId;
+    const pricingVersion = snapshot.pricing.version;
+    setSelectionSubmitting({ projectId: startedProjectId, sourceVersionId: startedVersionId });
+    setError(null);
+    setNotice(null);
+
+    const operation = "segment";
+    const key = submitKey(
+      operation,
+      `${startedProjectId}:${startedVersionId}:${JSON.stringify({ positive, negative })}:${pricingVersion}:${segmentationReservationUsdMicros}`,
+    );
+
+    try {
+      const result = await apiRequest<SegmentationResponse>("/api/segmentations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": key,
+        },
+        body: JSON.stringify({
+          projectId: startedProjectId,
+          sourceVersionId: startedVersionId,
+          positivePoints: [positive],
+          negativePoints: negative === null ? [] : [negative],
+          costConsent: {
+            pricingVersion,
+            reservationUsdMicros: segmentationReservationUsdMicros,
+            acknowledged: true,
+          },
+        }),
+      });
+      clearSubmitKey(operation);
+      setPendingSelection({
+        sourceVersionId: startedVersionId,
+        positivePoints: [positive],
+        negativePoints: negative === null ? [] : [negative],
+        runId: result.runId,
+      });
+
+      try {
+        const next = await apiRequest<ProjectSnapshotDto>(`/api/projects/${startedProjectId}`);
+        if (currentProjectIdRef.current === startedProjectId) setSnapshot(next);
+      } catch {
+        setConnectionWarning("Selection queued. Refresh the project to see progress.");
+        setPollNow((value) => value + 1);
+      }
+      setNotice("Selection queued. The worker will save the mask.");
+    } catch (cause) {
+      if (cause instanceof ApiRequestError) clearSubmitKey(operation);
+      setError(cause instanceof Error ? cause.message : "Selection enqueue failed.");
+      setPendingSelection(null);
+      setSelectionSubmitting(null);
+    } finally {
+      if (selectionInFlightRef.current === scopeKey) selectionInFlightRef.current = null;
+    }
+  }
+
+  async function handleCanvasSelect(point: Point): Promise<void> {
+    if (projectId === null || snapshot === null || activeVersionId === null) return;
+    if (selectionPending || !segmentationAvailable) return;
+
+    setSelectionUiVersionId(activeVersionId);
+    setPendingSelection(null);
+    setSelectionSubmitting(null);
+
+    if (effectiveSelectionMode === "negative") {
+      const base = displayPositivePoint;
+      if (base === null) return;
+      if (base.x === point.x && base.y === point.y) {
+        setError("Positive and negative points must differ.");
+        return;
+      }
+      setPositivePoint(base);
+      setNegativePoint(point);
+      setSelectedSelectionId(null);
+      await enqueueSelection(base, point);
+      return;
+    }
+
+    setPositivePoint(point);
+    setNegativePoint(null);
+    setSelectedSelectionId(null);
+    await enqueueSelection(point, null);
+  }
+
+  function handleModeChange(mode: "positive" | "negative"): void {
+    setSelectionUiVersionId(activeVersionId);
+    setSelectionMode(mode);
+  }
+
+  function handleSelectSavedSelection(selectionId: string | null): void {
+    setSelectionUiVersionId(activeVersionId);
+    setPendingSelection(null);
+    setSelectionSubmitting(null);
+    setSelectedSelectionId(selectionId);
+    setPositivePoint(null);
+    setNegativePoint(null);
+    setSelectionMode("positive");
+  }
+
   async function handleRetry(run: RunSummaryDto): Promise<void> {
     if (projectId === null || snapshot === null) return;
-    const retryReservation =
-      run.retryMode === "local" ? 0 : mockMode ? 0 : snapshot.pricing.reservations.imageUsdMicros;
+    const retryReservation = run.retryMode === "local" ? 0 : run.retryReservationUsdMicros;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -386,7 +751,7 @@ export function AppShell() {
       `${run.retryMode}:${snapshot.pricing.version}:${retryReservation}`,
     );
     try {
-      await apiRequest<RetryResponse>(`/api/runs/${run.id}/retry`, {
+      const result = await apiRequest<RetryResponse>(`/api/runs/${run.id}/retry`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -402,7 +767,26 @@ export function AppShell() {
         }),
       });
       clearSubmitKey(operation);
-      await loadProject(projectId);
+      if (run.kind === "segment" && run.segmentInput !== null) {
+        setSelectionUiVersionId(run.segmentInput.sourceVersionId);
+        setPendingSelection({
+          sourceVersionId: run.segmentInput.sourceVersionId,
+          positivePoints: run.segmentInput.positivePoints,
+          negativePoints: run.segmentInput.negativePoints,
+          runId: result.runId,
+        });
+        setSelectionSubmitting({
+          projectId,
+          sourceVersionId: run.segmentInput.sourceVersionId,
+        });
+        setSelectedSelectionId(null);
+        }
+      try {
+        await loadProject(projectId);
+      } catch {
+        setConnectionWarning("Retry queued. Refresh the project to see progress.");
+        setPollNow((value) => value + 1);
+      }
       setNotice("Retry queued.");
     } catch (cause) {
       if (cause instanceof ApiRequestError) clearSubmitKey(operation);
@@ -422,7 +806,9 @@ export function AppShell() {
         <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-xl font-semibold tracking-tight">AI Scene Composer</h1>
-            <p className="text-sm text-stone-600">Upload, sample, preset/custom generation and version tree</p>
+            <p className="text-sm text-stone-600">
+              Upload, sample, generation, SAM selection, editing and version tree
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-stone-900 px-3 py-1 text-xs font-medium text-white">
@@ -736,17 +1122,19 @@ export function AppShell() {
               Choose the bundled sample or upload a base image to create a root scene.
             </div>
           ) : (
-            <div className="mt-4 overflow-hidden rounded-lg border border-stone-200 bg-stone-100">
-              <Image
-                src={`/api/assets/${activeVersion.imageAssetId}`}
-                alt="Active canonical scene"
-                width={1024}
-                height={1024}
-                unoptimized
-                loading="eager"
-                className="h-auto w-full"
-              />
-            </div>
+            <SceneCanvas
+              imageAssetId={activeVersion.imageAssetId}
+              alt="Active canonical scene"
+              maskAssetId={displaySelection?.binaryMaskAssetId ?? null}
+              allowedMaskAssetId={activeVariant?.allowedMaskAssetId ?? null}
+              maskVisible={maskVisible}
+              maskOpacity={maskOpacity}
+              allowedVisible={allowedVisible}
+              disabled={selectionPending || !segmentationAvailable}
+              positivePoint={displayPositivePoint}
+              negativePoint={displayNegativePoint}
+              onSelect={(point) => void handleCanvasSelect(point)}
+            />
           )}
         </section>
 
@@ -772,6 +1160,55 @@ export function AppShell() {
               started or recovered. An unclean lock may take up to two minutes to expire.
             </div>
           ) : null}
+
+          <SelectionPanel
+            activeVersionId={activeVersionId}
+            selections={selectionsForActive}
+            selection={activeSelection}
+            pendingRun={pendingSegmentRun}
+            submitting={submittingThisView}
+            latestRun={latestSegmentRun}
+            mode={effectiveSelectionMode}
+            onModeChange={handleModeChange}
+            positivePoint={displayPositivePoint}
+            negativePoint={displayNegativePoint}
+            paddingPx={paddingPx}
+            onPaddingChange={setPaddingPx}
+            maskVisible={maskVisible}
+            onMaskVisibleChange={setMaskVisible}
+            maskOpacity={maskOpacity}
+            onMaskOpacityChange={setMaskOpacity}
+            allowedVisible={allowedVisible}
+            onAllowedVisibleChange={setAllowedVisible}
+            onSelectSaved={handleSelectSavedSelection}
+            onRetry={(run) => void handleRetry(run)}
+            retryDisabled={busy || selectionPending}
+            providerAvailable={segmentationAvailable}
+            providerReason={segmentationReason}
+            mockMode={mockMode}
+            segmentationReservationUsdMicros={segmentationReservationUsdMicros}
+          />
+
+          <EditPanel
+            key={`${projectId ?? "none"}:${activeVersionId ?? "none"}`}
+            projectId={projectId}
+            activeVersionId={activeVersionId}
+            selection={activeSelection}
+            selectionPending={selectionPending}
+            paddingPx={paddingPx}
+            versions={snapshot?.versions ?? []}
+            references={snapshot?.references ?? []}
+            latestRun={latestEditRun}
+            busy={busy}
+            mockMode={mockMode}
+            imageReservationUsdMicros={editReservationUsdMicros}
+            providerAvailable={editProviderAvailable}
+            providerReason={editProviderReason}
+            onSubmit={handleEditSubmit}
+            onUploadReference={handleUploadReference}
+            onRetry={(run) => void handleRetry(run)}
+            onContinue={(versionId) => void handleSelectVersion(versionId)}
+          />
 
           {latestGenerationRun !== null ? (
             <section className="rounded-xl border border-stone-300 bg-white p-4">
@@ -890,10 +1327,16 @@ export function AppShell() {
                     ${(snapshot.pricing.reservations.imageUsdMicros / 1_000_000).toFixed(2)}
                   </dd>
                 </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-stone-500">SAM reservation</dt>
+                  <dd className="font-medium">
+                    ${(snapshot.pricing.reservations.segmentationUsdMicros / 1_000_000).toFixed(6)}
+                  </dd>
+                </div>
               </dl>
             )}
             <p className="mt-3 text-xs text-stone-500">
-              SAM selection and editing are added in later phases.
+              Comparison and evaluation arrive in later phases.
             </p>
           </section>
         </aside>

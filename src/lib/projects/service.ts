@@ -49,7 +49,14 @@ import {
   type StoredIdempotentResponse,
 } from "../idempotency/service";
 import { inspectImage, normalizeBase, normalizeReference } from "../images/normalize";
-import { classifyRetryMode, inputSummaryFor, retryReservationUsdMicros } from "../runs/retry-mode";
+import {
+  classifyRetryMode,
+  editInputFor,
+  editMetricsFor,
+  inputSummaryFor,
+  retryReservationUsdMicros,
+  segmentInputFor,
+} from "../runs/retry-mode";
 import type { AssetRole } from "../contracts/api";
 
 export function createProject(db: AppDatabase, env: AppEnv, title?: string): ProjectRow {
@@ -144,6 +151,7 @@ export function toRunSummary(
   row: RunRow,
   usage?: UsageEventRow,
   imageReservationUsdMicros?: number,
+  segmentationReservationUsdMicros?: number,
 ): RunSummaryDto {
   const retryMode = classifyRetryMode(row, usage);
   return {
@@ -156,15 +164,28 @@ export function toRunSummary(
     parentVersionId: row.parentVersionId,
     outputVersionId: row.outputVersionId,
     outputSelectionId: row.outputSelectionId,
+    rawAssetId: row.rawAssetId,
+    normalizedRawAssetId: row.normalizedRawAssetId,
     inputSummary: inputSummaryFor(row),
+    segmentInput: segmentInputFor(row),
+    editInput: editInputFor(row),
+    metrics: editMetricsFor(row),
     retryMode,
-    retryReservationUsdMicros: retryReservationUsdMicros(row, retryMode, imageReservationUsdMicros),
+    retryReservationUsdMicros: retryReservationUsdMicros(
+      row,
+      retryMode,
+      imageReservationUsdMicros,
+      segmentationReservationUsdMicros,
+    ),
     providerLatencyMs: usage?.elapsedMs ?? null,
     errorCode: row.errorCode,
     errorMessage: row.errorMessage,
     cost: {
       reservedUsdMicros: row.reservedUsdMicros,
       budgetChargeUsdMicros: row.budgetChargeUsdMicros,
+      amountUsdMicros: usage?.amountUsdMicros ?? null,
+      provenance: usage?.costProvenance ?? null,
+      outcome: usage?.outcome ?? null,
     },
     createdAt: row.createdAt,
     startedAt: row.startedAt,
@@ -175,9 +196,13 @@ export function toRunSummary(
 export function getProjectSnapshot(
   db: AppDatabase,
   projectId: string,
-  env?: Pick<AppEnv, "imageReservationUsdMicros">,
+  env?: Pick<AppEnv, "imageReservationUsdMicros" | "aiMode" | "samMode">,
 ): ProjectSnapshotDto {
   const project = getProjectOrThrow(db, projectId);
+  const segmentationReservationUsdMicros =
+    env === undefined || (env.aiMode === "live" && env.samMode === "live")
+      ? undefined
+      : 0;
   const versionRows = db
     .select()
     .from(versions)
@@ -202,15 +227,36 @@ export function getProjectSnapshot(
     .where(eq(usageEvents.projectId, projectId))
     .all();
   const usageByRunId = new Map(usageRows.map((usage) => [usage.runId, usage]));
+  const referenceRows = db
+    .select()
+    .from(assets)
+    .where(and(eq(assets.projectId, projectId), eq(assets.kind, "reference")))
+    .orderBy(asc(assets.createdAt), asc(assets.id))
+    .all();
 
   return {
     project: toProjectDto(project),
     versions: versionRows.map(toVersionDto),
     selections: selectionRows.map(toSelectionDto),
+    references: referenceRows.map((row) => ({
+      id: row.id,
+      width: row.width,
+      height: row.height,
+      sha256: row.sha256,
+      createdAt: row.createdAt,
+    })),
     runs: runRows.map((row) =>
-      toRunSummary(row, usageByRunId.get(row.id), env?.imageReservationUsdMicros),
+      toRunSummary(
+        row,
+        usageByRunId.get(row.id),
+        env?.imageReservationUsdMicros,
+        segmentationReservationUsdMicros,
+      ),
     ),
-    pricing: getPublicPricing(env),
+    pricing: getPublicPricing({
+      imageReservationUsdMicros: env?.imageReservationUsdMicros,
+      segmentationReservationUsdMicros,
+    }),
   };
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildEditPayload,
   buildGenerationPayload,
   callOpenRouterGeneration,
   parseOpenRouterImageResponse,
@@ -32,6 +33,65 @@ describe("OpenRouter generation payload", () => {
     expect(payload).not.toHaveProperty("size");
     expect(payload).not.toHaveProperty("output_format");
     expect(payload).not.toHaveProperty("seed");
+  });
+});
+
+describe("OpenRouter edit payload", () => {
+  it("sends the source first and ordered references as image URLs, with no mask or size", async () => {
+    const source = await createTestImage({ width: 1024, height: 1024 });
+    const first = await createTestImage({
+      width: 1024,
+      height: 1024,
+      background: { r: 200, g: 10, b: 10 },
+    });
+    const second = await createTestImage({
+      width: 1024,
+      height: 1024,
+      background: { r: 10, g: 200, b: 10 },
+    });
+    const payload = buildEditPayload({
+      model: "openai/gpt-image-2.5-flare",
+      prompt: "Make the target green.",
+      orderedInputImages: [source, first, second],
+    });
+
+    expect(payload).toMatchObject({
+      model: "openai/gpt-image-2.5-flare",
+      prompt: "Make the target green.",
+      aspect_ratio: "1:1",
+      quality: "medium",
+      background: "opaque",
+      n: 1,
+      provider: { only: ["openai"], allow_fallbacks: false },
+    });
+    expect(payload.input_references).toHaveLength(3);
+    expect(payload.input_references.map((entry) => entry.image_url.url)).toEqual([
+      `data:image/png;base64,${source.toString("base64")}`,
+      `data:image/png;base64,${first.toString("base64")}`,
+      `data:image/png;base64,${second.toString("base64")}`,
+    ]);
+    expect(payload).not.toHaveProperty("mask");
+    expect(payload).not.toHaveProperty("size");
+    expect(payload).not.toHaveProperty("output_format");
+    expect(payload).not.toHaveProperty("seed");
+  });
+
+  it("rejects zero or more than two references", async () => {
+    const source = await createTestImage({ width: 1024, height: 1024 });
+    expect(() =>
+      buildEditPayload({
+        model: "openai/gpt-image-2.5-flare",
+        prompt: "Edit.",
+        orderedInputImages: [],
+      }),
+    ).toThrow("zero to two references");
+    expect(() =>
+      buildEditPayload({
+        model: "openai/gpt-image-2.5-flare",
+        prompt: "Edit.",
+        orderedInputImages: [source, source, source, source],
+      }),
+    ).toThrow("zero to two references");
   });
 });
 

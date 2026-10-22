@@ -1,4 +1,4 @@
-import type { Point } from "../contracts/domain";
+import type { Point, SamMaskRecord } from "../contracts/domain";
 
 export const IMAGE_MODELS = [
   "openai/gpt-image-2.5-flare",
@@ -58,30 +58,60 @@ export interface ImageAdapterInput {
   orderedInputImages: Buffer[];
 }
 
-export interface ImageAdapterResult {
-  bytes: Buffer;
-  mimeType: "image/png" | "image/jpeg" | "image/webp";
-  width: number;
-  height: number;
-  providerRequestId: string | null;
-  observedCostUsdMicros: number | null;
-  usage: Record<string, unknown> | null;
-  latencyMs: number | null;
+export type ImageAdapterResult = ImageGenerationResult;
+
+export interface ImageEditAdapter {
+  edit(input: ImageAdapterInput): Promise<ImageGenerationResult>;
 }
 
 export interface SegmentationAdapterInput {
   image: Buffer;
-  positive: Point;
-  negative: Point | null;
-  size?: number;
-}
-
-export interface SegmentationAdapterResult {
-  fullMask: Uint8Array;
   width: number;
   height: number;
+  positive: Point;
+  negative: Point | null;
+  prompt: string;
+}
+
+export interface SegmentationResponseMetadata {
   providerRequestId: string | null;
   observedCostUsdMicros: number | null;
   usage: Record<string, unknown> | null;
   latencyMs: number | null;
+}
+
+export type SegmentationAdapterResult =
+  | ({
+      kind: "mask";
+      representation: "sam-records";
+      records: SamMaskRecord[];
+      fullMask: Uint8Array;
+      width: number;
+      height: number;
+    } & SegmentationResponseMetadata)
+  | ({
+      kind: "mask";
+      representation: "full-mask";
+      fullMask: Uint8Array;
+      width: number;
+      height: number;
+    } & SegmentationResponseMetadata)
+  | ({
+      kind: "rejected";
+      message: string;
+      httpStatus: number | null;
+    } & SegmentationResponseMetadata)
+  | ({
+      kind: "invalid";
+      message: string;
+      httpStatus: number | null;
+    } & SegmentationResponseMetadata)
+  | ({
+      kind: "ambiguous";
+      message: string;
+      errorCode?: "PROVIDER_TIMEOUT" | "INTERRUPTED";
+    } & SegmentationResponseMetadata);
+
+export interface SegmentationAdapter {
+  segment(input: SegmentationAdapterInput): Promise<SegmentationAdapterResult>;
 }

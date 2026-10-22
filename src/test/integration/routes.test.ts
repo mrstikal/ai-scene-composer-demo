@@ -6,8 +6,13 @@ import { GET as healthRoute } from "@/app/api/health/route";
 import { GET as getProjectRoute } from "@/app/api/projects/[id]/route";
 import { POST as sampleRoute } from "@/app/api/projects/[id]/sample/route";
 import { GET as listProjectsRoute, POST as createProjectRoute } from "@/app/api/projects/route";
+import { POST as editRoute } from "@/app/api/edits/route";
+import { POST as segmentationRoute } from "@/app/api/segmentations/route";
 import { resetDatabaseForTests } from "@/lib/db/client";
 import type { HealthResponse, ProjectSnapshotDto } from "@/lib/contracts/api";
+import { createEditHandler } from "@/lib/jobs/handlers/edit";
+import { createSegmentHandler } from "@/lib/jobs/handlers/segment";
+import { runOnce } from "@/lib/jobs/worker";
 import { createTestEnvironment, createTestImage, type TestEnvironment } from "@/test/helpers/environment";
 
 const ENV_KEYS = [
@@ -157,5 +162,134 @@ describe("HTTP route contracts", () => {
     expect(health.modes).toEqual({ ai: "mock", sam: "fixture" });
     expect(health.fixtures.sampleProvenance).toBe("synthetic");
     expect(health.worker.status).toBe("missing");
+  });
+
+  it("enqueues a SAM selection through the route and reads it back after the worker", async () => {
+    const createResponse = await createProjectRoute(
+      new Request("http://localhost/api/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title: "Selection Route" }),
+      }),
+    );
+    const { projectId } = (await createResponse.json()) as { projectId: string };
+
+    const sampleResponse = await sampleRoute(
+      new Request(`http://localhost/api/projects/${projectId}/sample`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({ sampleId: "living-room-v1" }),
+      }),
+      { params: Promise.resolve({ id: projectId }) },
+    );
+    const sample = (await sampleResponse.json()) as { rootVersionId: string };
+
+    const selectionResponse = await segmentationRoute(
+      new Request("http://localhost/api/segmentations", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          projectId,
+          sourceVersionId: sample.rootVersionId,
+          positivePoints: [{ x: 420, y: 610 }],
+          negativePoints: [],
+          costConsent: {
+            pricingVersion: "2026-10-21-v1",
+            reservationUsdMicros: 0,
+            acknowledged: true,
+          },
+        }),
+      }),
+    );
+    expect(selectionResponse.status).toBe(202);
+    const { runId } = (await selectionResponse.json()) as { runId: string };
+
+    const queuedResponse = await getProjectRoute(new Request("http://localhost"), {
+      params: Promise.resolve({ id: projectId }),
+    });
+    const queued = (await queuedResponse.json()) as ProjectSnapshotDto;
+    expect(queued.runs.find((run) => run.id === runId)).toMatchObject({
+      kind: "segment",
+      status: "queued",
+      parentVersionId: sample.rootVersionId,
+    });
+
+    const worker = await runOnce({
+      db: testEnv.handle.db,
+      sqlite: testEnv.handle.sqlite,
+      env: testEnv.env,
+      handlers: { segment: createSegmentHandler() },
+    });
+    expect(worker).toEqual({ status: "handled", runId });
+
+    const completedResponse = await getProjectRoute(new Request("http://localhost"), {
+      params: Promise.resolve({ id: projectId }),
+    });
+    const completed = (await completedResponse.json()) as ProjectSnapshotDto;
+    expect(completed.selections).toHaveLength(1);
+    expect(completed.runs.find((run) => run.id === runId)).toMatchObject({
+      status: "succeeded",
+      outputSelectionId: completed.selections[0]?.id,
+      cost: { budgetChargeUsdMicros: 0 },
+    });
+
+    const selection = completed.selections[0];
+    if (selection === undefined) throw new Error("Selection is missing.");
+    const editResponse = await editRoute(
+      new Request("http://localhost/api/edits", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          projectId,
+          parentVersionId: sample.rootVersionId,
+          selectionId: selection.id,
+          paddingPx: 16,
+          targetLabel: "sofa",
+          instruction: "Make the sofa green.",
+          referenceAssetIds: [],
+          model: "openai/gpt-image-2.5-flare",
+          costConsent: {
+            pricingVersion: "2026-10-21-v1",
+            reservationUsdMicros: 0,
+            acknowledged: true,
+          },
+        }),
+      }),
+    );
+    expect(editResponse.status).toBe(202);
+    const { runId: editRunId } = (await editResponse.json()) as { runId: string };
+
+    const editWorker = await runOnce({
+      db: testEnv.handle.db,
+      sqlite: testEnv.handle.sqlite,
+      env: testEnv.env,
+      handlers: { edit: createEditHandler() },
+    });
+    expect(editWorker).toEqual({ status: "handled", runId: editRunId });
+
+    const editedResponse = await getProjectRoute(new Request("http://localhost"), {
+      params: Promise.resolve({ id: projectId }),
+    });
+    const edited = (await editedResponse.json()) as ProjectSnapshotDto;
+    const editRun = edited.runs.find((run) => run.id === editRunId);
+    expect(editRun).toMatchObject({
+      status: "succeeded",
+      parentVersionId: sample.rootVersionId,
+    });
+    expect(edited.project.activeVersionId).toBe(sample.rootVersionId);
+    const child = edited.versions.find((version) => version.id === editRun?.outputVersionId);
+    expect(child).toMatchObject({
+      parentVersionId: sample.rootVersionId,
+      origin: "edit",
+    });
   });
 });

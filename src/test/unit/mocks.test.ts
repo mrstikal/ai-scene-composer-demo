@@ -44,6 +44,7 @@ describe("deterministic mock adapters", () => {
       prompt: "ignored",
       orderedInputImages: [source],
     });
+    if (flare.kind !== "image") throw new Error("Expected a mock edit image.");
     expect(await firstPixel(flare.bytes)).toEqual([50, 20, 30]);
 
     const sunburst = await mockEdit({
@@ -51,6 +52,7 @@ describe("deterministic mock adapters", () => {
       prompt: "ignored",
       orderedInputImages: [source],
     });
+    if (sunburst.kind !== "image") throw new Error("Expected a mock edit image.");
     expect(await firstPixel(sunburst.bytes)).toEqual([10, 20, 70]);
   });
 
@@ -99,9 +101,13 @@ describe("deterministic mock adapters", () => {
     const source = await createTestImage({ width: 1024, height: 1024 });
     const result = await mockSegment({
       image: source,
+      width: 1024,
+      height: 1024,
       positive: { x: 100, y: 100 },
       negative: null,
+      prompt: "segment object 1",
     });
+    if (result.kind !== "mask") throw new Error("Expected a mock mask.");
     expect(result.width).toBe(1024);
     expect(result.height).toBe(1024);
     expect(result.fullMask.reduce((sum, value) => sum + value, 0)).toBe(129 * 129);

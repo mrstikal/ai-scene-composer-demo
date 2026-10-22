@@ -1,7 +1,5 @@
 import { readFile } from "node:fs/promises";
 
-import sharp from "sharp";
-
 import { AppError } from "../errors";
 import {
   CANONICAL_SIZE,
@@ -10,6 +8,11 @@ import {
   inspectImage,
   inspectProviderImage,
 } from "../images/normalize";
+import {
+  encodeMaskPng,
+  pasteCroppedMask,
+  validateFullFrameMask,
+} from "../images/mask-pipeline";
 import type {
   ImageAdapterInput,
   ImageAdapterResult,
@@ -65,6 +68,7 @@ export async function mockEdit(input: ImageAdapterInput): Promise<ImageAdapterRe
   const inspected = await inspectProviderImage(bytes);
 
   return {
+    kind: "image",
     bytes,
     mimeType: "image/png",
     width: inspected.width,
@@ -114,12 +118,9 @@ export function buildMockMask(input: {
   const right = Math.min(size, positive.x + 65);
   const top = Math.max(0, positive.y - 64);
   const bottom = Math.min(size, positive.y + 65);
-  const mask = new Uint8Array(size * size);
-
-  for (let y = top; y < bottom; y += 1) {
-    const row = y * size;
-    mask.fill(1, row + left, row + right);
-  }
+  const cropWidth = right - left;
+  const cropHeight = bottom - top;
+  const raster = new Uint8Array(cropWidth * cropHeight).fill(1);
 
   if (
     negative !== null &&
@@ -128,25 +129,42 @@ export function buildMockMask(input: {
     negative.y >= top &&
     negative.y < bottom
   ) {
-    mask[negative.y * size + negative.x] = 0;
+    raster[(negative.y - top) * cropWidth + (negative.x - left)] = 0;
   }
 
-  return mask;
+  const pasted = pasteCroppedMask({
+    raster,
+    bounds: { left, top, right, bottom },
+    frameWidth: size,
+    frameHeight: size,
+  });
+  validateFullFrameMask({
+    mask: pasted.mask,
+    width: size,
+    height: size,
+    positive,
+    negative,
+  });
+  return pasted.mask;
 }
 
 export async function mockSegment(input: SegmentationAdapterInput): Promise<SegmentationAdapterResult> {
-  const size = input.size ?? CANONICAL_SIZE;
+  if (input.width !== input.height) {
+    throw new AppError(500, "CONFIG_INVALID", "Mock segmentation requires a square canonical image.");
+  }
   await inspectImage(input.image);
   const fullMask = buildMockMask({
     positive: input.positive,
     negative: input.negative,
-    size,
+    size: input.width,
   });
 
   return {
+    kind: "mask",
+    representation: "full-mask",
     fullMask,
-    width: size,
-    height: size,
+    width: input.width,
+    height: input.height,
     providerRequestId: null,
     observedCostUsdMicros: 0,
     usage: null,
@@ -155,19 +173,7 @@ export async function mockSegment(input: SegmentationAdapterInput): Promise<Segm
 }
 
 export async function maskToGrayscalePng(mask: Uint8Array, width: number, height: number): Promise<Buffer> {
-  if (mask.length !== width * height) {
-    throw new AppError(500, "CONFIG_INVALID", "Mask dimensions do not match its raster length.");
-  }
-
-  const pixels = Buffer.alloc(mask.length);
-  for (let index = 0; index < mask.length; index += 1) {
-    pixels[index] = mask[index] === 1 ? 255 : 0;
-  }
-
-  return sharp(pixels, { raw: { width, height, channels: 1 } })
-    .toColourspace("b-w")
-    .png({ compressionLevel: 9, adaptiveFiltering: false })
-    .toBuffer();
+  return encodeMaskPng(mask, width, height);
 }
 
 export function imageModelForChannel(channel: "red" | "blue"): ImageModel {

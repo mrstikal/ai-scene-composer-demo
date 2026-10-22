@@ -4,13 +4,13 @@ import { join } from "node:path";
 import type { AppEnv } from "../config/env";
 import {
   fixtureAssetsReady,
-  samFixtureReady,
   tryReadFixtureManifest,
 } from "../config/fixtures";
 import { assertCompatibleConfig } from "../config/pricing";
 import type { HealthResponse } from "../contracts/api";
 import type { DatabaseHandle } from "../db/client";
 import { isDatabaseMigrated } from "../db/migrate";
+import { samFixtureStatus } from "../sam/capture";
 
 const WORKER_READY_MAX_AGE_MS = 15_000;
 
@@ -52,7 +52,8 @@ export async function getHealth(
     manifest.fixtures.every(
       (fixture) => fixture.provenance === "licensed_photo" && fixture.licenseRecord !== null,
     );
-  const capturedSamReady = samFixtureReady(env.repoRoot);
+  const samStatus = samFixtureStatus(env.repoRoot, sample?.normalizedSha256);
+  const capturedSamReady = samStatus.ready;
 
   const imagesAvailable = env.aiMode === "mock" || env.openRouterApiKey !== null;
   const segmentationAvailable =

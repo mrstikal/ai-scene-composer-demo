@@ -1,13 +1,18 @@
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { assertCompatibleConfig, getPricingConfig, getProviderCapabilities } from "../config/pricing";
 import type { AppEnv } from "../config/env";
 import type { CostConsent, RetryResponse } from "../contracts/api";
-import { generationSnapshotSchema } from "../contracts/domain";
+import {
+  editSnapshotSchema,
+  generationSnapshotSchema,
+  segmentSnapshotSchema,
+  type EditSnapshot,
+} from "../contracts/domain";
 import type { DatabaseHandle } from "../db/client";
-import { runs, type RunRow } from "../db/schema";
+import { assets, runs, versions, type RunRow } from "../db/schema";
 import { immediateTransaction } from "../db/transaction";
 import { AppError } from "../errors";
 import {
@@ -19,6 +24,12 @@ import {
   type StoredIdempotentResponse,
 } from "../idempotency/service";
 import { assertProjectCanCreateRoot } from "../projects/service";
+import {
+  segmentationExecutionMode,
+  segmentationReservationUsdMicros,
+} from "../segmentations/service";
+import { assertEditInputsAvailable } from "../edits/service";
+import { buildEditCommonInputHash } from "../edits/common-input";
 import { assertReservationAllowed } from "../budget/service";
 import { getUsageEventByRunId } from "../usage/service";
 import { classifyRetryMode } from "./retry-mode";
@@ -119,11 +130,31 @@ export async function enqueueRetry(input: {
     return response;
   }
 
-  const reservationUsdMicros = env.aiMode === "mock" ? 0 : env.imageReservationUsdMicros;
+  const isSegment = original.kind === "segment";
+  const isEdit = original.kind === "edit";
+  const executionMode = isSegment ? segmentationExecutionMode(env) : env.aiMode;
+  const reservationUsdMicros = isSegment
+    ? segmentationReservationUsdMicros(env)
+    : env.aiMode === "mock"
+      ? 0
+      : env.imageReservationUsdMicros;
   validateRetryConsent(costConsent, pricing.version, reservationUsdMicros);
 
-  if (env.aiMode === "live" && env.openRouterApiKey === null) {
-    throw new AppError(503, "PROVIDER_UNAVAILABLE", "OpenRouter is not configured.");
+  if (isSegment && executionMode === "fixture") {
+    throw new AppError(
+      503,
+      "PROVIDER_UNAVAILABLE",
+      "A provider retry cannot run from a SAM fixture. Switch to live SAM.",
+    );
+  }
+
+  if (executionMode === "live") {
+    if (isSegment && env.metaModelApiKey === null) {
+      throw new AppError(503, "PROVIDER_UNAVAILABLE", "Meta SAM is not configured.");
+    }
+    if (!isSegment && env.openRouterApiKey === null) {
+      throw new AppError(503, "PROVIDER_UNAVAILABLE", "OpenRouter is not configured.");
+    }
   }
 
   const unknownCharge =
@@ -139,18 +170,54 @@ export async function enqueueRetry(input: {
     );
   }
 
-  const originalSnapshot = generationSnapshotSchema.safeParse(original.inputSnapshotJson);
-  if (!originalSnapshot.success) {
-    throw new AppError(422, "INVALID_RUN_STATE", "The original generation input is not retryable.");
+  let snapshot:
+    | ReturnType<typeof generationSnapshotSchema.parse>
+    | ReturnType<typeof segmentSnapshotSchema.parse>
+    | EditSnapshot;
+  let commonInputHash: string | null;
+  if (isSegment) {
+    const originalSegment = segmentSnapshotSchema.safeParse(original.inputSnapshotJson);
+    if (!originalSegment.success) {
+      throw new AppError(422, "INVALID_RUN_STATE", "The original segmentation input is not retryable.");
+    }
+    snapshot = segmentSnapshotSchema.parse({
+      ...originalSegment.data,
+      executionMode,
+      pricingVersion: pricing.version,
+      capabilityVersion: capabilities.version,
+      reservationUsdMicros,
+      capture: null,
+    });
+    commonInputHash = null;
+  } else if (isEdit) {
+    const originalEdit = editSnapshotSchema.safeParse(original.inputSnapshotJson);
+    if (!originalEdit.success) {
+      throw new AppError(422, "INVALID_RUN_STATE", "The original edit input is not retryable.");
+    }
+    const parsedEdit = editSnapshotSchema.parse({
+      ...originalEdit.data,
+      executionMode: env.aiMode,
+      pricingVersion: pricing.version,
+      capabilityVersion: capabilities.version,
+      reservationUsdMicros,
+    });
+    snapshot = parsedEdit;
+    commonInputHash = buildEditCommonInputHash(parsedEdit);
+  } else {
+    const originalSnapshot = generationSnapshotSchema.safeParse(original.inputSnapshotJson);
+    if (!originalSnapshot.success) {
+      throw new AppError(422, "INVALID_RUN_STATE", "The original generation input is not retryable.");
+    }
+    const parsedGeneration = generationSnapshotSchema.parse({
+      ...originalSnapshot.data,
+      executionMode: env.aiMode,
+      pricingVersion: pricing.version,
+      capabilityVersion: capabilities.version,
+      reservationUsdMicros,
+    });
+    snapshot = parsedGeneration;
+    commonInputHash = parsedGeneration.promptSha256;
   }
-
-  const snapshot = generationSnapshotSchema.parse({
-    ...originalSnapshot.data,
-    executionMode: env.aiMode,
-    pricingVersion: pricing.version,
-    capabilityVersion: capabilities.version,
-    reservationUsdMicros,
-  });
   const operation = "retry_provider";
   const requestHash = hashRequest({
     operation,
@@ -187,7 +254,33 @@ export async function enqueueRetry(input: {
         throw new AppError(422, "INVALID_RUN_STATE", "This run cannot be retried.");
       }
 
-      assertProjectCanCreateRoot(db, original.projectId);
+      if (isEdit) {
+        assertEditInputsAvailable(db, original.projectId, snapshot as EditSnapshot);
+      } else if (isSegment) {
+        const sourceVersionId = original.parentVersionId;
+        if (sourceVersionId === null) {
+          throw new AppError(422, "INVALID_RUN_STATE", "The segmentation source version is missing.");
+        }
+        const sourceVersion = db
+          .select()
+          .from(versions)
+          .where(and(eq(versions.id, sourceVersionId), eq(versions.projectId, original.projectId)))
+          .get();
+        if (sourceVersion === undefined) {
+          throw new AppError(422, "INVALID_RUN_STATE", "The segmentation source version is missing.");
+        }
+        const sourceAsset = db
+          .select()
+          .from(assets)
+          .where(eq(assets.id, sourceVersion.imageAssetId))
+          .get();
+        if (sourceAsset === undefined) {
+          throw new AppError(422, "INVALID_RUN_STATE", "The segmentation source asset is missing.");
+        }
+      } else {
+        assertProjectCanCreateRoot(db, original.projectId);
+      }
+
       const existingRetry = db
         .select({ id: runs.id })
         .from(runs)
@@ -203,15 +296,15 @@ export async function enqueueRetry(input: {
         .values({
           id: newRunId,
           projectId: original.projectId,
-          kind: "generate",
-          executionMode: env.aiMode,
+          kind: original.kind,
+          executionMode,
           comparisonGroupId: null,
           retryOfRunId: runId,
-          parentVersionId: null,
-          inputSelectionId: null,
+          parentVersionId: isSegment || isEdit ? original.parentVersionId : null,
+          inputSelectionId: isEdit ? original.inputSelectionId : null,
           model: snapshot.model,
           inputSnapshotJson: snapshot,
-          commonInputHash: snapshot.promptSha256,
+          commonInputHash,
           status: "queued",
           stage: "queued",
           reservedUsdMicros: reservationUsdMicros,

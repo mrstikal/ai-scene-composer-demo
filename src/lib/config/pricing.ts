@@ -9,6 +9,10 @@ const rateSchema = z
   .object({
     billable: z.string().min(1),
     unit: z.string().min(1),
+    usdPerToken: z.number().nonnegative().optional(),
+    usdPerMillionTokens: z.number().nonnegative().optional(),
+    usdPerImage: z.number().nonnegative().optional(),
+    usdPer1000Images: z.number().nonnegative().optional(),
   })
   .passthrough();
 
@@ -118,7 +122,10 @@ export function assertCompatibleConfig(): void {
   }
 }
 
-export function getPublicPricing(env?: { imageReservationUsdMicros: number }): PublicPricingDto {
+export function getPublicPricing(env?: {
+  imageReservationUsdMicros?: number;
+  segmentationReservationUsdMicros?: number;
+}): PublicPricingDto {
   const pricing = getPricingConfig();
   const imageUsdMicros = env?.imageReservationUsdMicros ?? pricing.reservations.image.usdMicros;
   return {
@@ -129,7 +136,8 @@ export function getPublicPricing(env?: { imageReservationUsdMicros: number }): P
       imageUsdMicros,
       comparisonUsdMicros:
         env === undefined ? pricing.reservations.comparison.usdMicros : imageUsdMicros * 2,
-      segmentationUsdMicros: pricing.reservations.segmentation.usdMicros,
+      segmentationUsdMicros:
+        env?.segmentationReservationUsdMicros ?? pricing.reservations.segmentation.usdMicros,
     },
     models: Object.entries(pricing.providers.openrouter.models).map(([id, model]) => ({
       id,
@@ -137,6 +145,20 @@ export function getPublicPricing(env?: { imageReservationUsdMicros: number }): P
       rates: model.rates,
     })),
   };
+}
+
+export function getSegmentationCalculatedCostUsdMicros(): number {
+  const pricing = getPricingConfig();
+  const rate = pricing.providers.meta.rates.find((entry) => entry.billable === "input_image");
+  if (rate === undefined || typeof rate.usdPerImage !== "number") {
+    throw new AppError(500, "CONFIG_INVALID", "Meta SAM per-image pricing is not configured.");
+  }
+
+  const micros = Math.round(rate.usdPerImage * 1_000_000);
+  if (!Number.isSafeInteger(micros) || micros < 0) {
+    throw new AppError(500, "CONFIG_INVALID", "Meta SAM per-image pricing is invalid.");
+  }
+  return micros;
 }
 
 export function resetConfigCacheForTests(): void {

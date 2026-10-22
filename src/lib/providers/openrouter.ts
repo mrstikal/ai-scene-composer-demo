@@ -5,6 +5,7 @@ import { inspectProviderImage } from "../images/normalize";
 import {
   GENERATION_MODEL,
   type ImageGenerationResult,
+  type ImageModel,
   type ImageResponseMetadata,
 } from "./types";
 
@@ -37,6 +38,50 @@ export function buildGenerationPayload(prompt: string): GenerationPayload {
       only: ["openai"],
       allow_fallbacks: false,
     },
+  };
+}
+
+export interface EditPayload {
+  model: ImageModel;
+  prompt: string;
+  aspect_ratio: "1:1";
+  quality: "medium";
+  background: "opaque";
+  n: 1;
+  provider: {
+    only: ["openai"];
+    allow_fallbacks: false;
+  };
+  input_references: Array<{
+    type: "image_url";
+    image_url: { url: string };
+  }>;
+}
+
+export function buildEditPayload(input: {
+  model: ImageModel;
+  prompt: string;
+  orderedInputImages: Buffer[];
+}): EditPayload {
+  if (input.orderedInputImages.length < 1 || input.orderedInputImages.length > 3) {
+    throw new Error("Edits require the source image and zero to two references.");
+  }
+
+  return {
+    model: input.model,
+    prompt: input.prompt,
+    aspect_ratio: "1:1",
+    quality: "medium",
+    background: "opaque",
+    n: 1,
+    provider: {
+      only: ["openai"],
+      allow_fallbacks: false,
+    },
+    input_references: input.orderedInputImages.map((bytes) => ({
+      type: "image_url",
+      image_url: { url: `data:image/png;base64,${bytes.toString("base64")}` },
+    })),
   };
 }
 
@@ -215,9 +260,9 @@ async function readBoundedResponseText(response: Response, maxBytes: number): Pr
   return new TextDecoder().decode(joined);
 }
 
-export async function callOpenRouterGeneration(input: {
+async function callOpenRouterImages(input: {
   apiKey: string;
-  prompt: string;
+  payload: unknown;
   fetchImpl?: typeof fetch;
 }): Promise<ImageGenerationResult> {
   const startedAt = Date.now();
@@ -231,7 +276,7 @@ export async function callOpenRouterGeneration(input: {
         "Content-Type": "application/json",
         Accept: "application/json",
       },
-      body: JSON.stringify(buildGenerationPayload(input.prompt)),
+      body: JSON.stringify(input.payload),
       signal: AbortSignal.timeout(OPENROUTER_TIMEOUT_MS),
       cache: "no-store",
     });
@@ -273,4 +318,34 @@ export async function callOpenRouterGeneration(input: {
       latencyMs: Date.now() - startedAt,
     };
   }
+}
+
+export async function callOpenRouterGeneration(input: {
+  apiKey: string;
+  prompt: string;
+  fetchImpl?: typeof fetch;
+}): Promise<ImageGenerationResult> {
+  return callOpenRouterImages({
+    apiKey: input.apiKey,
+    payload: buildGenerationPayload(input.prompt),
+    ...(input.fetchImpl === undefined ? {} : { fetchImpl: input.fetchImpl }),
+  });
+}
+
+export async function callOpenRouterImage(input: {
+  apiKey: string;
+  model: ImageModel;
+  prompt: string;
+  orderedInputImages: Buffer[];
+  fetchImpl?: typeof fetch;
+}): Promise<ImageGenerationResult> {
+  return callOpenRouterImages({
+    apiKey: input.apiKey,
+    payload: buildEditPayload({
+      model: input.model,
+      prompt: input.prompt,
+      orderedInputImages: input.orderedInputImages,
+    }),
+    ...(input.fetchImpl === undefined ? {} : { fetchImpl: input.fetchImpl }),
+  });
 }

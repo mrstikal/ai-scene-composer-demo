@@ -1,6 +1,14 @@
 import { z } from "zod";
 
 import { SCENE_PRESET_IDS } from "../../config/scene-presets";
+import {
+  EDIT_MODELS,
+  pointSchema,
+  type EditMetrics,
+  type Point,
+  type Regions,
+  type VersionSourceMetadata,
+} from "./domain";
 
 export const createProjectSchema = z
   .object({
@@ -67,6 +75,37 @@ export const generationRequestSchema = z
 
 export type GenerationRequest = z.infer<typeof generationRequestSchema>;
 
+export const segmentationRequestSchema = z
+  .object({
+    projectId: z.string().uuid(),
+    sourceVersionId: z.string().uuid(),
+    positivePoints: z.array(pointSchema).length(1),
+    negativePoints: z.array(pointSchema).max(1),
+    costConsent: costConsentSchema,
+  })
+  .strict();
+
+export type SegmentationRequest = z.infer<typeof segmentationRequestSchema>;
+
+export const editRequestSchema = z
+  .object({
+    projectId: z.string().uuid(),
+    parentVersionId: z.string().uuid(),
+    selectionId: z.string().uuid(),
+    paddingPx: z.union([z.literal(16), z.literal(32)]),
+    targetLabel: z.string().trim().min(1).max(80).optional(),
+    instruction: z.string().trim().min(1).max(2000),
+    referenceAssetIds: z
+      .array(z.string().uuid())
+      .max(2)
+      .refine((ids) => new Set(ids).size === ids.length, "Reference asset IDs must be unique."),
+    model: z.enum(EDIT_MODELS),
+    costConsent: costConsentSchema,
+  })
+  .strict();
+
+export type EditRequest = z.infer<typeof editRequestSchema>;
+
 export const retryRequestSchema = z
   .object({
     costConsent: costConsentSchema,
@@ -93,6 +132,7 @@ export type ErrorCode =
   | "UNSUPPORTED_IMAGE_TYPE"
   | "INVALID_IMAGE"
   | "INVALID_SELECTION"
+  | "INVALID_PROVIDER_OUTPUT"
   | "INVALID_RUN_STATE"
   | "BUDGET_EXCEEDED"
   | "PROVIDER_UNAVAILABLE"
@@ -124,23 +164,47 @@ export interface VersionDto {
   imageAssetId: string;
   origin: "upload" | "sample" | "generate" | "edit";
   originalAssetId: string | null;
-  sourceMetadata: unknown;
+  sourceMetadata: VersionSourceMetadata | null;
+  createdAt: number;
+}
+
+export interface ReferenceAssetDto {
+  id: string;
+  width: number;
+  height: number;
+  sha256: string;
   createdAt: number;
 }
 
 export interface SelectionDto {
   id: string;
   sourceVersionId: string;
-  positivePoints: unknown;
-  negativePoints: unknown;
+  positivePoints: Point[];
+  negativePoints: Point[];
   binaryMaskAssetId: string;
-  regions: unknown;
+  regions: Regions;
   createdAt: number;
 }
 
 export interface RunInputSummaryDto {
   mode: "preset" | "custom";
   presetId: string | null;
+}
+
+export interface SegmentInputSummaryDto {
+  sourceVersionId: string;
+  positivePoints: Point[];
+  negativePoints: Point[];
+}
+
+export interface EditInputSummaryDto {
+  parentVersionId: string;
+  selectionId: string;
+  paddingPx: 16 | 32;
+  targetLabel: string;
+  instruction: string;
+  referenceAssetIds: string[];
+  model: string;
 }
 
 export type RetryMode = "local" | "provider" | "none";
@@ -155,7 +219,12 @@ export interface RunSummaryDto {
   parentVersionId: string | null;
   outputVersionId: string | null;
   outputSelectionId: string | null;
+  rawAssetId: string | null;
+  normalizedRawAssetId: string | null;
   inputSummary: RunInputSummaryDto | null;
+  segmentInput: SegmentInputSummaryDto | null;
+  editInput: EditInputSummaryDto | null;
+  metrics: EditMetrics | null;
   retryMode: RetryMode;
   retryReservationUsdMicros: number;
   providerLatencyMs: number | null;
@@ -164,6 +233,9 @@ export interface RunSummaryDto {
   cost: {
     reservedUsdMicros: number;
     budgetChargeUsdMicros: number;
+    amountUsdMicros: number | null;
+    provenance: "provider" | "calculated" | "estimated" | "unavailable" | null;
+    outcome: "pending" | "completed" | "rejected" | "unknown" | null;
   };
   createdAt: number;
   startedAt: number | null;
@@ -190,6 +262,7 @@ export interface ProjectSnapshotDto {
   project: ProjectDto;
   versions: VersionDto[];
   selections: SelectionDto[];
+  references: ReferenceAssetDto[];
   runs: RunSummaryDto[];
   pricing: PublicPricingDto;
 }
@@ -198,22 +271,70 @@ export interface GenerationResponse {
   runId: string;
 }
 
+export interface SegmentationResponse {
+  runId: string;
+}
+
+export interface EditResponse {
+  runId: string;
+}
+
 export interface RetryResponse {
   runId: string;
 }
 
+export type RunDetailInputDto =
+  | {
+      kind: "generate";
+      mode: "preset" | "custom";
+      presetId: string | null;
+      presetVersion: string | null;
+      prompt: string;
+      model: string;
+      pricingVersion: string;
+      capabilityVersion: string;
+      reservationUsdMicros: number;
+    }
+  | {
+      kind: "segment";
+      sourceVersionId: string;
+      sourceAssetId: string;
+      sourceSha256: string;
+      width: number;
+      height: number;
+      positivePoints: Point[];
+      negativePoints: Point[];
+      prompt: string;
+      promptVersion: string;
+      model: string;
+      parserVersion: string;
+      pricingVersion: string;
+      capabilityVersion: string;
+      reservationUsdMicros: number;
+    }
+  | {
+      kind: "edit";
+      parentVersionId: string;
+      sourceAssetId: string;
+      sourceSha256: string;
+      selectionId: string;
+      paddingPx: 16 | 32;
+      targetLabel: string;
+      instruction: string;
+      prompt: string;
+      promptVersion: string;
+      model: string;
+      referenceAssetIds: string[];
+      referenceSha256: string[];
+      maskPipelineVersion: string;
+      pricingVersion: string;
+      capabilityVersion: string;
+      reservationUsdMicros: number;
+    };
+
 export interface RunDetailDto {
   run: RunSummaryDto;
-  input: {
-    mode: "preset" | "custom";
-    presetId: string | null;
-    presetVersion: string | null;
-    prompt: string;
-    model: string;
-    pricingVersion: string;
-    capabilityVersion: string;
-    reservationUsdMicros: number;
-  } | null;
+  input: RunDetailInputDto | null;
   usage: {
     outcome: "pending" | "completed" | "rejected" | "unknown";
     amountUsdMicros: number | null;

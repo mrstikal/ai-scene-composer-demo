@@ -2,9 +2,15 @@ import { join } from "node:path";
 
 import type { AppEnv } from "../config/env";
 import { AppError } from "../errors";
-import { mockGenerate } from "./mocks";
-import { callOpenRouterGeneration } from "./openrouter";
-import type { ImageGenerationAdapter, ImageGenerationInput } from "./types";
+import { mockEdit, mockGenerate, mockSegment } from "./mocks";
+import { callOpenRouterGeneration, callOpenRouterImage } from "./openrouter";
+import { callMetaSam } from "./sam";
+import type {
+  ImageEditAdapter,
+  ImageGenerationAdapter,
+  ImageGenerationInput,
+  SegmentationAdapter,
+} from "./types";
 
 export function createGenerationAdapter(
   env: AppEnv,
@@ -31,5 +37,41 @@ export function createGenerationAdapter(
         apiKey,
         prompt: input.prompt,
       }),
+  };
+}
+
+export function createEditAdapter(
+  env: AppEnv,
+  executionMode: "mock" | "live",
+): ImageEditAdapter {
+  if (executionMode === "mock") {
+    return { edit: mockEdit };
+  }
+
+  const apiKey = env.openRouterApiKey;
+  if (apiKey === null) {
+    throw new AppError(503, "PROVIDER_UNAVAILABLE", "OpenRouter is not configured.");
+  }
+
+  return {
+    edit: (input) => callOpenRouterImage({ ...input, apiKey }),
+  };
+}
+
+export function createSegmentationAdapter(
+  env: AppEnv,
+  executionMode: "mock" | "live",
+): SegmentationAdapter {
+  if (executionMode === "mock") {
+    return { segment: mockSegment };
+  }
+
+  const apiKey = env.metaModelApiKey;
+  if (apiKey === null) {
+    throw new AppError(503, "PROVIDER_UNAVAILABLE", "Meta SAM is not configured.");
+  }
+
+  return {
+    segment: (input) => callMetaSam({ ...input, apiKey }),
   };
 }
