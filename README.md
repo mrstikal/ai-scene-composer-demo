@@ -2,7 +2,7 @@
 
 Local single-user Next.js application for scene upload/sample, object-aware editing, version history, comparison and evaluation. The delivery contract is [AI_SCENE_COMPOSER_POC_PLAN.md](./AI_SCENE_COMPOSER_POC_PLAN.md).
 
-Current implementation: **offline Phase 5 and Phase 6 complete; live evidence blocked/partial**. Upload, bundled sample, project/version read-back, health, worker foundation, deterministic mock adapters, preset/custom generation, source-bound SAM selection, single-model and side-by-side editing, frozen-input comparison, project costs, manual evaluation and the five-case evaluation fixture are implemented. A paid live OpenRouter comparison using both models is still required for full live completion.
+Current implementation: **offline Phase 5/6 and the full live DoD are complete**. Upload, bundled sample, project/version read-back, health, worker foundation, deterministic mock adapters, preset/custom generation, source-bound SAM selection, single-model and side-by-side editing, frozen-input comparison, project costs, manual evaluation and the five-case evaluation fixture are implemented. A paid live Flare/Sunburst comparison and live SAM selection on an AI-generated scene were executed on 2026-10-22; four of the five fixed evaluation cases remain `not_run`.
 
 ## Requirements
 
@@ -77,16 +77,16 @@ Live mode requires separate provider accounts and budget; mock mode requires nei
 - `src/test/fixtures/synthetic/living-room-v1.png`
 - `src/test/fixtures/synthetic/reference-sofa-v1.png`
 
-Optional owner-supplied photographs replace them only when the required permission record exists:
+This repository supplies both optional photographs with CC0 permission records, so the committed manifest selects the photographs. Synthetic fallbacks remain available when a temporary fixture root has no photos:
 
 | Slot | Photograph | Permission record |
 |---|---|---|
-| `living-room-v1` | `src/test/fixtures/photos/living-room-v1.jpg` or `.png`, square and at least 1024 x 1024 | `src/test/fixtures/licenses/living-room-v1.md` |
-| `reference-sofa-v1` | `src/test/fixtures/photos/reference-sofa-v1.jpg` or `.png`, at least 1024 px on the longest side | `src/test/fixtures/licenses/reference-sofa-v1.md` |
+| `living-room-v1` | `src/test/fixtures/photos/living-room-v1.jpg` (2048 x 2048, CC0 derivative) | `src/test/fixtures/licenses/living-room-v1.md` |
+| `reference-sofa-v1` | `src/test/fixtures/photos/reference-sofa-v1.jpg` (1600 x 1061, CC0 derivative) | `src/test/fixtures/licenses/reference-sofa-v1.md` |
 
-A photo without a permission record fails with `FIXTURE_LICENSE_MISSING`; both extensions fail with `FIXTURE_AMBIGUOUS`. The manifest records provenance, original/normalized SHA-256 hashes, normalization version and nullable license record. Synthetic sources are labeled **Synthetic Sample** and never counted as satisfying the licensed-photograph gate.
+A photo without a permission record fails with `FIXTURE_LICENSE_MISSING`; both extensions fail with `FIXTURE_AMBIGUOUS`. The manifest records provenance, original/normalized SHA-256 hashes, normalization version and nullable license record. Synthetic sources are labeled **Synthetic Sample** and never counted as satisfying the licensed-photograph gate. The committed manifest reports `licensed_photo` for both slots.
 
-`GET /api/health` reports `fixtures.licensedPhotosReady` separately from synthetic availability. Missing photographs are a deferred photo gate, not a mock-demo blocker.
+`GET /api/health` reports `fixtures.licensedPhotosReady` separately from synthetic availability. The supplied CC0 photographs satisfy the licensed-photograph gate; the synthetic fallback remains available for isolated tests.
 
 ## SAM captures
 
@@ -113,7 +113,7 @@ npm run typecheck        # strict TypeScript
 npm run lint             # ESLint
 npm run build            # production build
 npm run test:e2e         # Playwright mock generation, SAM selection, editing, comparison and mobile/a11y
-npm run test:live        # guard only; makes no provider calls, live evidence is blocked/partial
+npm run test:live        # guarded live DoD; requires explicit flags and approval (see below)
 RESET_LOCAL_DATA=1 npm run data:reset
 ```
 
@@ -184,13 +184,13 @@ Definitions live in `src/test/fixtures/evaluation/cases.json`. Every executed ca
 
 | Case | Status | Flare run | Sunburst run | Observations |
 |---|---|---|---|---|
-| Recolor sofa | not_run | — | — | Awaiting paid live comparison |
+| Recolor sofa | passed | `1dcfadce-5525-42d5-866d-224078312d19` | `1565155d-42bc-4743-8072-fde997ff186d` | Deep green velvet sofa; boundary 4, prompt 5, plausibility 5; protected mismatch 0 |
 | Replace lamp from a reference | not_run | — | — | Awaiting paid live comparison |
 | Remove wall picture | not_run | — | — | Awaiting paid live comparison |
 | Change object material | not_run | — | — | Awaiting paid live comparison |
 | Change chair | not_run | — | — | Awaiting paid live comparison |
 
-The offline mock gate is fully exercisable without credentials. Full live completion still requires one paid comparison using both models on identical frozen reference-driven input.
+The offline mock gate is fully exercisable without credentials. The live DoD walkthrough also executed a reference-driven black-leather sofa comparison on a preset-generated scene; both models received identical frozen input and costs/latency were recorded. The live SAM mask selected a cushion rather than the whole sofa, so the final composite preserved most of the original; the raw/final toggle exposes the raw model change. Four fixed cases (replace lamp from a reference, remove wall picture, change object material, change chair) remain `not_run`.
 
 ## Testing
 
@@ -219,17 +219,20 @@ Current baseline: 32 Vitest files / 178 offline tests and 12 Playwright mock tes
 7. Use a second project to demonstrate the Generate tab: one preset and one custom prompt, then inspect the queued/failed/retry states and the project costs panel.
 8. Stop the web and worker processes before any reset. The five-case table remains `not_run` until real live comparisons are recorded.
 
-## Live evidence and remaining gates
+## Live evidence and remaining evaluation work
 
-- Live Meta SAM was manually verified on 2026-10-22 with explicit authorization: two paid calls, approximately USD 0.005 total; the first correctly failed `INVALID_SELECTION` and the second succeeded with a 2,500 micro-USD calculated charge. Exact details are in [docs/live-evidence.md](docs/live-evidence.md).
-- Live OpenRouter generation/edit and a paid Flare/Sunburst comparison have **not** been run. There is no observed live OpenRouter latency, output quality or provider-reported cost.
-- The five-case evaluation table remains `not_run`. Full live Definition of Done is **blocked/partial** pending explicit spend approval, confirmed access to both image models, licensed reference photos/permission records, a live SAM selection on an AI-generated scene, and a documented call budget.
-- `npm run test:live` is a guard only and makes no provider calls.
+- Live DoD passed on 2026-10-22 with explicit authorization. The successful run made 8 image calls and 4 SAM calls through the normal services; planned-suite cost was USD 0.181416 (provider-reported 171,416 + calculated SAM 10,000 micro-USD). Including two failed attempts and exploratory probes, the session cost USD 0.284654; total observed live spend is approximately USD 0.289654.
+- Live OpenRouter Flare and Sunburst both succeeded for preset generation, custom generation, reference-driven comparison, child edit and root branch. Live Meta SAM succeeded for selection and correction on the AI-generated scene and for the licensed-photo recolor case.
+- The reference comparison used identical parent/Selection/references/prompt and `commonInputHash` for both models; protected mismatch was 0 and final background MAE was 0. The live SAM mask covered only a cushion, so the final composite preserved most of the original while the raw output replaced the whole sofa. Manual scores and exact Run IDs are in [docs/live-evidence.md](docs/live-evidence.md).
+- The fixed **Recolor sofa** case passed for both models. The other four fixed cases remain `not_run`; this is recorded, not inferred from mocks.
+- `npm run test:live` is a guarded live DoD runner. It exits before any network call unless `RUN_LIVE_AI_TESTS=1`, `AI_MODE=live`, `SAM_MODE=live`, `LIVE_DOD_APPROVED=1`, both provider keys and licensed photo fixtures are present. When enabled it makes a planned 8 image calls and 4 SAM calls through the normal enqueue/worker/budget/ledger services, writes a dedicated `data/live-dod-*.sqlite` database and `assets-local/live-dod-*` artifacts, and records a safe report in `docs/live-dod-report.json`. Do not enable it without explicit spend approval.
 
 ## Licensing
 
-- This repository does not include a code license file; treat the code as private/unlicensed until the owner adds one. Do not redistribute it without permission.
-- Synthetic fixture PNGs are generated by this project from project-authored SVG primitives. Optional owner-supplied photographs require a matching permission record under `src/test/fixtures/licenses/`; personal photographs and raw live captures must not be committed.
+- Code is released under the [MIT License](LICENSE).
+- The bundled source and reference photographs are CC0 1.0 public-domain derivatives with permission records in `src/test/fixtures/licenses/`: `Living room (15246771173).jpg` by Carlos ZGZ and `Couch-furniture-living-room-sofa (24300293356).jpg` by www.Pixel.la Free Stock Photos. The source photo is square-cropped/resized; the reference is resized. No people or personal data are visible.
+- Synthetic fixture PNGs are generated by this project from project-authored SVG primitives. Do not add personal photographs or raw live captures; any new photo requires a matching permission record under `src/test/fixtures/licenses/`.
+- Incidental artwork/posters depicted in the photos are not relicensed by CC0; clear any depicted works before commercial reuse.
 - Provider outputs and third-party marks remain subject to the applicable provider terms. Review those terms before publishing generated images or comparison evidence.
 
 ## Storage and safety

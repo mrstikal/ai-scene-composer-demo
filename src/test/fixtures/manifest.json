@@ -3,27 +3,23 @@
   "fixtures": [
     {
       "fixtureId": "living-room-v1",
-      "selectedPath": "synthetic/living-room-v1.png",
-      "provenance": "synthetic",
-      "originalSha256": "0b67d408e9d261a10b02c9715d48d34f9d7826ade642f67837a7782d6aa77ccd",
-      "normalizedSha256": "1b142fc80de9c151ae0d4fbf0ea824d3e5b8a2214f444d0f52419884b4eac738",
+      "selectedPath": "photos/living-room-v1.jpg",
+      "provenance": "licensed_photo",
+      "originalSha256": "5ad1d2e11747a553fca2e42c02fa02720f0f14b064031b56691db87921dfed96",
+      "normalizedSha256": "d72689d4946f654e8287c5072179cfcb3ff89b3a3f156d3c88c2b25e07922a68",
       "normalizationVersion": "normalization-v1",
-      "licenseRecord": null,
-      "generator": "prepare-fixtures",
-      "generatorVersion": "synthetic-v1"
+      "licenseRecord": "licenses/living-room-v1.md"
     },
     {
       "fixtureId": "reference-sofa-v1",
-      "selectedPath": "synthetic/reference-sofa-v1.png",
-      "provenance": "synthetic",
-      "originalSha256": "c54f3298103d9bb5db8df6d67444a7d496291bb20494a7fa77883179ce3669ee",
-      "normalizedSha256": "6d523c5528bd1c125aa5366835880c21737c94f698a8df948d51d0e21d69f63f",
+      "selectedPath": "photos/reference-sofa-v1.jpg",
+      "provenance": "licensed_photo",
+      "originalSha256": "c6b3160de54fa6061f8132a78ea9b29c4810daaf3149e7d745b8b5210d904332",
+      "normalizedSha256": "2eb3aa2bfd0e2e90b2dd05fbbe0c6ed33ac767308cfe3918ef145ef39f121398",
       "normalizationVersion": "normalization-v1",
-      "licenseRecord": null,
-      "generator": "prepare-fixtures",
-      "generatorVersion": "synthetic-v1"
+      "licenseRecord": "licenses/reference-sofa-v1.md"
     }
   ],
-  "licensedPhotosReady": false,
+  "licensedPhotosReady": true,
   "samFixtureReady": false
 }

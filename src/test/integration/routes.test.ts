@@ -160,7 +160,7 @@ describe("HTTP route contracts", () => {
     const health = (await healthResponse.json()) as HealthResponse;
     expect(health.status).toBe("ready");
     expect(health.modes).toEqual({ ai: "mock", sam: "fixture" });
-    expect(health.fixtures.sampleProvenance).toBe("synthetic");
+    expect(health.fixtures.sampleProvenance).toBe("licensed_photo");
     expect(health.worker.status).toBe("missing");
   });
 

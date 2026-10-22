@@ -1,0 +1,780 @@
+{
+  "startedAt": "2026-10-22T13:57:03.821Z",
+  "finishedAt": "2026-10-22T14:00:04.822Z",
+  "status": "passed",
+  "databasePath": "data/live-dod-2026-10-22T13-57-03-760Z.sqlite",
+  "assetDir": "assets-local/live-dod-2026-10-22T13-57-03-760Z",
+  "plannedCalls": {
+    "image": 8,
+    "sam": 4
+  },
+  "projects": {
+    "walkthrough": {
+      "projectId": "8c247279-b461-4545-9f3f-ef584e6e519a",
+      "steps": [
+        {
+          "step": "preset-generation",
+          "runIds": [
+            "fb6123b7-e8ea-4df5-9e22-141e6f2c7984"
+          ],
+          "status": "succeeded",
+          "models": [
+            "openai/gpt-image-2.5-flare"
+          ],
+          "costs": [
+            {
+              "runId": "fb6123b7-e8ea-4df5-9e22-141e6f2c7984",
+              "status": "succeeded",
+              "amountUsdMicros": 13705,
+              "provenance": "provider",
+              "outcome": "completed",
+              "latencyMs": 12698
+            }
+          ],
+          "metrics": [
+            {
+              "runId": "fb6123b7-e8ea-4df5-9e22-141e6f2c7984",
+              "nativeWidth": null,
+              "nativeHeight": null,
+              "normalizedWidth": null,
+              "normalizedHeight": null,
+              "protectedPixelCount": null,
+              "protectedMismatchPixels": null,
+              "rawBackgroundMae": null,
+              "finalBackgroundMae": null
+            }
+          ],
+          "outputVersionIds": [
+            "0c06b608-b64e-4dbc-8eec-4c4371cf811c"
+          ]
+        },
+        {
+          "step": "sam-positive",
+          "runIds": [
+            "02a1a394-e22a-4a3f-9d48-4fa47d81e9d2"
+          ],
+          "status": "succeeded",
+          "models": [
+            "sam-3.1"
+          ],
+          "costs": [
+            {
+              "runId": "02a1a394-e22a-4a3f-9d48-4fa47d81e9d2",
+              "status": "succeeded",
+              "amountUsdMicros": 2500,
+              "provenance": "calculated",
+              "outcome": "completed",
+              "latencyMs": 789
+            }
+          ],
+          "metrics": [
+            {
+              "runId": "02a1a394-e22a-4a3f-9d48-4fa47d81e9d2",
+              "nativeWidth": null,
+              "nativeHeight": null,
+              "normalizedWidth": null,
+              "normalizedHeight": null,
+              "protectedPixelCount": null,
+              "protectedMismatchPixels": null,
+              "rawBackgroundMae": null,
+              "finalBackgroundMae": null
+            }
+          ],
+          "outputVersionIds": []
+        },
+        {
+          "step": "sam-correction",
+          "runIds": [
+            "e6b0b7ee-1bf6-4b42-9514-9f64bc24bf5e"
+          ],
+          "status": "succeeded",
+          "models": [
+            "sam-3.1"
+          ],
+          "costs": [
+            {
+              "runId": "e6b0b7ee-1bf6-4b42-9514-9f64bc24bf5e",
+              "status": "succeeded",
+              "amountUsdMicros": 2500,
+              "provenance": "calculated",
+              "outcome": "completed",
+              "latencyMs": 833
+            }
+          ],
+          "metrics": [
+            {
+              "runId": "e6b0b7ee-1bf6-4b42-9514-9f64bc24bf5e",
+              "nativeWidth": null,
+              "nativeHeight": null,
+              "normalizedWidth": null,
+              "normalizedHeight": null,
+              "protectedPixelCount": null,
+              "protectedMismatchPixels": null,
+              "rawBackgroundMae": null,
+              "finalBackgroundMae": null
+            }
+          ],
+          "outputVersionIds": []
+        },
+        {
+          "step": "reference-comparison",
+          "runIds": [
+            "88d215fd-237f-4a65-88de-d8ce5a6ba907",
+            "0a048d56-531a-49f5-bf22-4f10139c5b22"
+          ],
+          "status": "succeeded,succeeded",
+          "models": [
+            "openai/gpt-image-2.5-flare",
+            "openai/gpt-image-2.5-sunburst"
+          ],
+          "costs": [
+            {
+              "runId": "88d215fd-237f-4a65-88de-d8ce5a6ba907",
+              "status": "succeeded",
+              "amountUsdMicros": 27914,
+              "provenance": "provider",
+              "outcome": "completed",
+              "latencyMs": 19844
+            },
+            {
+              "runId": "0a048d56-531a-49f5-bf22-4f10139c5b22",
+              "status": "succeeded",
+              "amountUsdMicros": 27914,
+              "provenance": "provider",
+              "outcome": "completed",
+              "latencyMs": 27121
+            }
+          ],
+          "metrics": [
+            {
+              "runId": "88d215fd-237f-4a65-88de-d8ce5a6ba907",
+              "nativeWidth": 1024,
+              "nativeHeight": 1024,
+              "normalizedWidth": 1024,
+              "normalizedHeight": 1024,
+              "protectedPixelCount": 1040909,
+              "protectedMismatchPixels": 0,
+              "rawBackgroundMae": 16.759470168221558,
+              "finalBackgroundMae": 0
+            },
+            {
+              "runId": "0a048d56-531a-49f5-bf22-4f10139c5b22",
+              "nativeWidth": 1024,
+              "nativeHeight": 1024,
+              "normalizedWidth": 1024,
+              "normalizedHeight": 1024,
+              "protectedPixelCount": 1040909,
+              "protectedMismatchPixels": 0,
+              "rawBackgroundMae": 16.604398335173073,
+              "finalBackgroundMae": 0
+            }
+          ],
+          "outputVersionIds": [
+            "6ed0114a-fa6d-41cf-93cb-b6a53c7a0595",
+            "78b8333f-27d2-442a-9089-8f20763639d6"
+          ],
+          "comparisonGroupId": "c436a266-fef1-4408-98ef-1b0ef5a99c8b"
+        },
+        {
+          "step": "child-sam",
+          "runIds": [
+            "2d15101a-e053-48b2-a13f-64ab987ded66"
+          ],
+          "status": "succeeded",
+          "models": [
+            "sam-3.1"
+          ],
+          "costs": [
+            {
+              "runId": "2d15101a-e053-48b2-a13f-64ab987ded66",
+              "status": "succeeded",
+              "amountUsdMicros": 2500,
+              "provenance": "calculated",
+              "outcome": "completed",
+              "latencyMs": 1037
+            }
+          ],
+          "metrics": [
+            {
+              "runId": "2d15101a-e053-48b2-a13f-64ab987ded66",
+              "nativeWidth": null,
+              "nativeHeight": null,
+              "normalizedWidth": null,
+              "normalizedHeight": null,
+              "protectedPixelCount": null,
+              "protectedMismatchPixels": null,
+              "rawBackgroundMae": null,
+              "finalBackgroundMae": null
+            }
+          ],
+          "outputVersionIds": []
+        },
+        {
+          "step": "child-edit",
+          "runIds": [
+            "6ad6608d-9821-49b0-ba42-9becad5b8b61"
+          ],
+          "status": "succeeded",
+          "models": [
+            "openai/gpt-image-2.5-flare"
+          ],
+          "costs": [
+            {
+              "runId": "6ad6608d-9821-49b0-ba42-9becad5b8b61",
+              "status": "succeeded",
+              "amountUsdMicros": 22117,
+              "provenance": "provider",
+              "outcome": "completed",
+              "latencyMs": 17251
+            }
+          ],
+          "metrics": [
+            {
+              "runId": "6ad6608d-9821-49b0-ba42-9becad5b8b61",
+              "nativeWidth": 1024,
+              "nativeHeight": 1024,
+              "normalizedWidth": 1024,
+              "normalizedHeight": 1024,
+              "protectedPixelCount": 1023643,
+              "protectedMismatchPixels": 0,
+              "rawBackgroundMae": 6.881544314440354,
+              "finalBackgroundMae": 0
+            }
+          ],
+          "outputVersionIds": [
+            "9e8a15bf-5e84-4921-bae8-50a5a27cf589"
+          ]
+        },
+        {
+          "step": "root-branch-edit",
+          "runIds": [
+            "aff2950e-faa9-4e7b-9c60-692d282deb08"
+          ],
+          "status": "succeeded",
+          "models": [
+            "openai/gpt-image-2.5-sunburst"
+          ],
+          "costs": [
+            {
+              "runId": "aff2950e-faa9-4e7b-9c60-692d282deb08",
+              "status": "succeeded",
+              "amountUsdMicros": 22132,
+              "provenance": "provider",
+              "outcome": "completed",
+              "latencyMs": 25726
+            }
+          ],
+          "metrics": [
+            {
+              "runId": "aff2950e-faa9-4e7b-9c60-692d282deb08",
+              "nativeWidth": 1024,
+              "nativeHeight": 1024,
+              "normalizedWidth": 1024,
+              "normalizedHeight": 1024,
+              "protectedPixelCount": 1033741,
+              "protectedMismatchPixels": 0,
+              "rawBackgroundMae": 16.14880774455755,
+              "finalBackgroundMae": 0
+            }
+          ],
+          "outputVersionIds": [
+            "867e72ab-b6ff-4612-ba4b-3f0a81b0b83b"
+          ]
+        }
+      ],
+      "costs": {
+        "totals": {
+          "providerUsdMicros": 113782,
+          "calculatedUsdMicros": 7500,
+          "estimatedUsdMicros": 0,
+          "activeReservationUsdMicros": 0,
+          "unknownHoldUsdMicros": 0,
+          "commitmentUsdMicros": 121282,
+          "budgetLimitUsdMicros": 5000000,
+          "remainingUsdMicros": 4878718,
+          "overrunUsdMicros": 0
+        },
+        "byOperation": [
+          {
+            "operation": "generate",
+            "providerUsdMicros": 13705,
+            "calculatedUsdMicros": 0,
+            "estimatedUsdMicros": 0,
+            "activeReservationUsdMicros": 0,
+            "unknownHoldUsdMicros": 0
+          },
+          {
+            "operation": "segment",
+            "providerUsdMicros": 0,
+            "calculatedUsdMicros": 7500,
+            "estimatedUsdMicros": 0,
+            "activeReservationUsdMicros": 0,
+            "unknownHoldUsdMicros": 0
+          },
+          {
+            "operation": "edit",
+            "providerUsdMicros": 100077,
+            "calculatedUsdMicros": 0,
+            "estimatedUsdMicros": 0,
+            "activeReservationUsdMicros": 0,
+            "unknownHoldUsdMicros": 0
+          }
+        ],
+        "byModel": [
+          {
+            "model": "openai/gpt-image-2.5-flare",
+            "providerUsdMicros": 63736,
+            "calculatedUsdMicros": 0,
+            "estimatedUsdMicros": 0,
+            "activeReservationUsdMicros": 0,
+            "unknownHoldUsdMicros": 0
+          },
+          {
+            "model": "openai/gpt-image-2.5-sunburst",
+            "providerUsdMicros": 50046,
+            "calculatedUsdMicros": 0,
+            "estimatedUsdMicros": 0,
+            "activeReservationUsdMicros": 0,
+            "unknownHoldUsdMicros": 0
+          },
+          {
+            "model": "sam-3.1",
+            "providerUsdMicros": 0,
+            "calculatedUsdMicros": 7500,
+            "estimatedUsdMicros": 0,
+            "activeReservationUsdMicros": 0,
+            "unknownHoldUsdMicros": 0
+          }
+        ],
+        "events": [
+          {
+            "id": "c051abb4-c393-48df-bbe9-e6df12fed2f0",
+            "runId": "fb6123b7-e8ea-4df5-9e22-141e6f2c7984",
+            "operation": "generate",
+            "provider": "openrouter",
+            "model": "openai/gpt-image-2.5-flare",
+            "executionMode": "live",
+            "outcome": "completed",
+            "amountUsdMicros": 13705,
+            "costProvenance": "provider",
+            "pricingVersion": "2026-10-21-v1",
+            "providerRequestId": null,
+            "elapsedMs": 12698,
+            "createdAt": 1792677423835,
+            "settledAt": 1792677436545
+          },
+          {
+            "id": "275efe55-b394-4eb1-b617-730e280fc183",
+            "runId": "02a1a394-e22a-4a3f-9d48-4fa47d81e9d2",
+            "operation": "segment",
+            "provider": "meta",
+            "model": "sam-3.1",
+            "executionMode": "live",
+            "outcome": "completed",
+            "amountUsdMicros": 2500,
+            "costProvenance": "calculated",
+            "pricingVersion": "2026-10-21-v1",
+            "providerRequestId": "resp_6ada163e7ff171cb97e94770",
+            "elapsedMs": 789,
+            "createdAt": 1792677436642,
+            "settledAt": 1792677438990
+          },
+          {
+            "id": "fb68a55c-e135-4066-bc6a-afbe11210e5b",
+            "runId": "e6b0b7ee-1bf6-4b42-9514-9f64bc24bf5e",
+            "operation": "segment",
+            "provider": "meta",
+            "model": "sam-3.1",
+            "executionMode": "live",
+            "outcome": "completed",
+            "amountUsdMicros": 2500,
+            "costProvenance": "calculated",
+            "pricingVersion": "2026-10-21-v1",
+            "providerRequestId": "resp_6ada16418a8b172289e748e5",
+            "elapsedMs": 833,
+            "createdAt": 1792677439224,
+            "settledAt": 1792677442240
+          },
+          {
+            "id": "db7f38e3-6605-4d67-bdf0-4b92998070e3",
+            "runId": "0a048d56-531a-49f5-bf22-4f10139c5b22",
+            "operation": "edit",
+            "provider": "openrouter",
+            "model": "openai/gpt-image-2.5-sunburst",
+            "executionMode": "live",
+            "outcome": "completed",
+            "amountUsdMicros": 27914,
+            "costProvenance": "provider",
+            "pricingVersion": "2026-10-21-v1",
+            "providerRequestId": null,
+            "elapsedMs": 27121,
+            "createdAt": 1792677442556,
+            "settledAt": 1792677469688
+          },
+          {
+            "id": "29f0495c-e2a8-492e-afdb-5d990794d096",
+            "runId": "88d215fd-237f-4a65-88de-d8ce5a6ba907",
+            "operation": "edit",
+            "provider": "openrouter",
+            "model": "openai/gpt-image-2.5-flare",
+            "executionMode": "live",
+            "outcome": "completed",
+            "amountUsdMicros": 27914,
+            "costProvenance": "provider",
+            "pricingVersion": "2026-10-21-v1",
+            "providerRequestId": null,
+            "elapsedMs": 19844,
+            "createdAt": 1792677469945,
+            "settledAt": 1792677489799
+          },
+          {
+            "id": "7cc2322d-3fee-4f7a-acdb-77d9e2086de7",
+            "runId": "2d15101a-e053-48b2-a13f-64ab987ded66",
+            "operation": "segment",
+            "provider": "meta",
+            "model": "sam-3.1",
+            "executionMode": "live",
+            "outcome": "completed",
+            "amountUsdMicros": 2500,
+            "costProvenance": "calculated",
+            "pricingVersion": "2026-10-21-v1",
+            "providerRequestId": "resp_6ada16736de306a63e7b44b6",
+            "elapsedMs": 1037,
+            "createdAt": 1792677490033,
+            "settledAt": 1792677492997
+          },
+          {
+            "id": "0471978b-87d2-45de-907e-966733a023f9",
+            "runId": "6ad6608d-9821-49b0-ba42-9becad5b8b61",
+            "operation": "edit",
+            "provider": "openrouter",
+            "model": "openai/gpt-image-2.5-flare",
+            "executionMode": "live",
+            "outcome": "completed",
+            "amountUsdMicros": 22117,
+            "costProvenance": "provider",
+            "pricingVersion": "2026-10-21-v1",
+            "providerRequestId": null,
+            "elapsedMs": 17251,
+            "createdAt": 1792677493229,
+            "settledAt": 1792677510491
+          },
+          {
+            "id": "1bfb6a28-4b3b-4d78-be2b-757a010bb2fa",
+            "runId": "aff2950e-faa9-4e7b-9c60-692d282deb08",
+            "operation": "edit",
+            "provider": "openrouter",
+            "model": "openai/gpt-image-2.5-sunburst",
+            "executionMode": "live",
+            "outcome": "completed",
+            "amountUsdMicros": 22132,
+            "costProvenance": "provider",
+            "pricingVersion": "2026-10-21-v1",
+            "providerRequestId": null,
+            "elapsedMs": 25726,
+            "createdAt": 1792677510728,
+            "settledAt": 1792677536464
+          }
+        ]
+      }
+    },
+    "custom": {
+      "projectId": "903f0066-aaba-45ea-8197-04f0de97741b",
+      "steps": [
+        {
+          "step": "custom-generation",
+          "runIds": [
+            "bb710d92-baf9-441c-86bd-c0071b981af7"
+          ],
+          "status": "succeeded",
+          "models": [
+            "openai/gpt-image-2.5-flare"
+          ],
+          "costs": [
+            {
+              "runId": "bb710d92-baf9-441c-86bd-c0071b981af7",
+              "status": "succeeded",
+              "amountUsdMicros": 13360,
+              "provenance": "provider",
+              "outcome": "completed",
+              "latencyMs": 12754
+            }
+          ],
+          "metrics": [
+            {
+              "runId": "bb710d92-baf9-441c-86bd-c0071b981af7",
+              "nativeWidth": null,
+              "nativeHeight": null,
+              "normalizedWidth": null,
+              "normalizedHeight": null,
+              "protectedPixelCount": null,
+              "protectedMismatchPixels": null,
+              "rawBackgroundMae": null,
+              "finalBackgroundMae": null
+            }
+          ],
+          "outputVersionIds": [
+            "bd97dc6b-8ff8-4c05-858b-19bf69cd7c1d"
+          ]
+        }
+      ],
+      "costs": {
+        "totals": {
+          "providerUsdMicros": 13360,
+          "calculatedUsdMicros": 0,
+          "estimatedUsdMicros": 0,
+          "activeReservationUsdMicros": 0,
+          "unknownHoldUsdMicros": 0,
+          "commitmentUsdMicros": 13360,
+          "budgetLimitUsdMicros": 5000000,
+          "remainingUsdMicros": 4986640,
+          "overrunUsdMicros": 0
+        },
+        "byOperation": [
+          {
+            "operation": "generate",
+            "providerUsdMicros": 13360,
+            "calculatedUsdMicros": 0,
+            "estimatedUsdMicros": 0,
+            "activeReservationUsdMicros": 0,
+            "unknownHoldUsdMicros": 0
+          }
+        ],
+        "byModel": [
+          {
+            "model": "openai/gpt-image-2.5-flare",
+            "providerUsdMicros": 13360,
+            "calculatedUsdMicros": 0,
+            "estimatedUsdMicros": 0,
+            "activeReservationUsdMicros": 0,
+            "unknownHoldUsdMicros": 0
+          }
+        ],
+        "events": [
+          {
+            "id": "7d405b85-02ce-42c4-84b3-7b514b14ce15",
+            "runId": "bb710d92-baf9-441c-86bd-c0071b981af7",
+            "operation": "generate",
+            "provider": "openrouter",
+            "model": "openai/gpt-image-2.5-flare",
+            "executionMode": "live",
+            "outcome": "completed",
+            "amountUsdMicros": 13360,
+            "costProvenance": "provider",
+            "pricingVersion": "2026-10-21-v1",
+            "providerRequestId": null,
+            "elapsedMs": 12754,
+            "createdAt": 1792677536688,
+            "settledAt": 1792677549454
+          }
+        ]
+      }
+    },
+    "recolor": {
+      "projectId": "cb9bb635-1ec1-4b92-a8d5-912b092a000e",
+      "steps": [
+        {
+          "step": "recolor-sam",
+          "runIds": [
+            "001f749c-5b85-4862-a964-de0b2f7df24f"
+          ],
+          "status": "succeeded",
+          "models": [
+            "sam-3.1"
+          ],
+          "costs": [
+            {
+              "runId": "001f749c-5b85-4862-a964-de0b2f7df24f",
+              "status": "succeeded",
+              "amountUsdMicros": 2500,
+              "provenance": "calculated",
+              "outcome": "completed",
+              "latencyMs": 1058
+            }
+          ],
+          "metrics": [
+            {
+              "runId": "001f749c-5b85-4862-a964-de0b2f7df24f",
+              "nativeWidth": null,
+              "nativeHeight": null,
+              "normalizedWidth": null,
+              "normalizedHeight": null,
+              "protectedPixelCount": null,
+              "protectedMismatchPixels": null,
+              "rawBackgroundMae": null,
+              "finalBackgroundMae": null
+            }
+          ],
+          "outputVersionIds": []
+        },
+        {
+          "step": "recolor-comparison",
+          "runIds": [
+            "1dcfadce-5525-42d5-866d-224078312d19",
+            "1565155d-42bc-4743-8072-fde997ff186d"
+          ],
+          "status": "succeeded,succeeded",
+          "models": [
+            "openai/gpt-image-2.5-flare",
+            "openai/gpt-image-2.5-sunburst"
+          ],
+          "costs": [
+            {
+              "runId": "1dcfadce-5525-42d5-866d-224078312d19",
+              "status": "succeeded",
+              "amountUsdMicros": 22137,
+              "provenance": "provider",
+              "outcome": "completed",
+              "latencyMs": 20993
+            },
+            {
+              "runId": "1565155d-42bc-4743-8072-fde997ff186d",
+              "status": "succeeded",
+              "amountUsdMicros": 22137,
+              "provenance": "provider",
+              "outcome": "completed",
+              "latencyMs": 30177
+            }
+          ],
+          "metrics": [
+            {
+              "runId": "1dcfadce-5525-42d5-866d-224078312d19",
+              "nativeWidth": 1024,
+              "nativeHeight": 1024,
+              "normalizedWidth": 1024,
+              "normalizedHeight": 1024,
+              "protectedPixelCount": 808755,
+              "protectedMismatchPixels": 0,
+              "rawBackgroundMae": 5.683204019346609,
+              "finalBackgroundMae": 0
+            },
+            {
+              "runId": "1565155d-42bc-4743-8072-fde997ff186d",
+              "nativeWidth": 1024,
+              "nativeHeight": 1024,
+              "normalizedWidth": 1024,
+              "normalizedHeight": 1024,
+              "protectedPixelCount": 808755,
+              "protectedMismatchPixels": 0,
+              "rawBackgroundMae": 5.272543600966919,
+              "finalBackgroundMae": 0
+            }
+          ],
+          "outputVersionIds": [
+            "131c427f-c2f1-4672-b961-4e317939e2a1",
+            "0100f758-1715-4e20-88f6-07adc97edc24"
+          ],
+          "comparisonGroupId": "764d19b1-a9ae-4c72-8b10-b2e624111816"
+        }
+      ],
+      "costs": {
+        "totals": {
+          "providerUsdMicros": 44274,
+          "calculatedUsdMicros": 2500,
+          "estimatedUsdMicros": 0,
+          "activeReservationUsdMicros": 0,
+          "unknownHoldUsdMicros": 0,
+          "commitmentUsdMicros": 46774,
+          "budgetLimitUsdMicros": 5000000,
+          "remainingUsdMicros": 4953226,
+          "overrunUsdMicros": 0
+        },
+        "byOperation": [
+          {
+            "operation": "segment",
+            "providerUsdMicros": 0,
+            "calculatedUsdMicros": 2500,
+            "estimatedUsdMicros": 0,
+            "activeReservationUsdMicros": 0,
+            "unknownHoldUsdMicros": 0
+          },
+          {
+            "operation": "edit",
+            "providerUsdMicros": 44274,
+            "calculatedUsdMicros": 0,
+            "estimatedUsdMicros": 0,
+            "activeReservationUsdMicros": 0,
+            "unknownHoldUsdMicros": 0
+          }
+        ],
+        "byModel": [
+          {
+            "model": "openai/gpt-image-2.5-flare",
+            "providerUsdMicros": 22137,
+            "calculatedUsdMicros": 0,
+            "estimatedUsdMicros": 0,
+            "activeReservationUsdMicros": 0,
+            "unknownHoldUsdMicros": 0
+          },
+          {
+            "model": "openai/gpt-image-2.5-sunburst",
+            "providerUsdMicros": 22137,
+            "calculatedUsdMicros": 0,
+            "estimatedUsdMicros": 0,
+            "activeReservationUsdMicros": 0,
+            "unknownHoldUsdMicros": 0
+          },
+          {
+            "model": "sam-3.1",
+            "providerUsdMicros": 0,
+            "calculatedUsdMicros": 2500,
+            "estimatedUsdMicros": 0,
+            "activeReservationUsdMicros": 0,
+            "unknownHoldUsdMicros": 0
+          }
+        ],
+        "events": [
+          {
+            "id": "f3063635-8642-4bb2-a805-7950367de86f",
+            "runId": "001f749c-5b85-4862-a964-de0b2f7df24f",
+            "operation": "segment",
+            "provider": "meta",
+            "model": "sam-3.1",
+            "executionMode": "live",
+            "outcome": "completed",
+            "amountUsdMicros": 2500,
+            "costProvenance": "calculated",
+            "pricingVersion": "2026-10-21-v1",
+            "providerRequestId": "resp_6ada16af7a862347c50441c2",
+            "elapsedMs": 1058,
+            "createdAt": 1792677549694,
+            "settledAt": 1792677552891
+          },
+          {
+            "id": "7b0374d9-dc9b-4ce3-baed-2c4623c92007",
+            "runId": "1565155d-42bc-4743-8072-fde997ff186d",
+            "operation": "edit",
+            "provider": "openrouter",
+            "model": "openai/gpt-image-2.5-sunburst",
+            "executionMode": "live",
+            "outcome": "completed",
+            "amountUsdMicros": 22137,
+            "costProvenance": "provider",
+            "pricingVersion": "2026-10-21-v1",
+            "providerRequestId": null,
+            "elapsedMs": 30177,
+            "createdAt": 1792677553124,
+            "settledAt": 1792677583310
+          },
+          {
+            "id": "8f9f17ee-2534-4c83-aa50-8555b4575188",
+            "runId": "1dcfadce-5525-42d5-866d-224078312d19",
+            "operation": "edit",
+            "provider": "openrouter",
+            "model": "openai/gpt-image-2.5-flare",
+            "executionMode": "live",
+            "outcome": "completed",
+            "amountUsdMicros": 22137,
+            "costProvenance": "provider",
+            "pricingVersion": "2026-10-21-v1",
+            "providerRequestId": null,
+            "elapsedMs": 20993,
+            "createdAt": 1792677583562,
+            "settledAt": 1792677604564
+          }
+        ]
+      }
+    }
+  },
+  "error": null
+}

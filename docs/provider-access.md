@@ -1,10 +1,10 @@
 # Provider Access Requirements
 
-Checked: 2026-10-21; live Meta SAM evidence added 2026-10-22. This record contains no credentials. No paid OpenRouter probe has been made.
+Checked: 2026-10-21; live OpenRouter and Meta evidence added 2026-10-22. This record contains no credentials. Both providers were exercised through the metered live DoD.
 
 | Provider | Required operations | Credential | Billing | Access status |
 |---|---|---|---|---|
-| OpenRouter | Initial scene generation with Flare; editing and comparison with Flare and Sunburst | `OPENROUTER_API_KEY` | Separate OpenRouter account | `not_verified` |
+| OpenRouter | Initial scene generation with Flare; editing and comparison with Flare and Sunburst | `OPENROUTER_API_KEY` | Separate OpenRouter account | `verified_manually_2026-10-22` |
 | Meta | Live SAM 3.1 segmentation | `META_MODEL_API_KEY` | Separate Meta account | `verified_manually_2026-10-22` |
 
 ## What each account enables
@@ -28,6 +28,6 @@ When explicitly authorized, verify access before any automated paid test:
 1. Confirm the OpenRouter key can see both `openai/gpt-image-2.5-flare` and `openai/gpt-image-2.5-sunburst`.
 2. Confirm the Meta key can access `sam-3.1` and the Responses endpoint.
 3. Confirm budget/spend limits and the planned call count.
-4. No automated paid live suite is enabled. `npm run test:live` is a guard that makes no calls; any future live run requires `RUN_LIVE_AI_TESTS=1`, `AI_MODE=live`, `SAM_MODE=live`, both credentials, licensed photographs/permission records, a documented budget/call count and explicit human authorization. See `docs/live-evidence.md`.
+4. `npm run test:live` is the metered live DoD runner. It requires `RUN_LIVE_AI_TESTS=1`, `AI_MODE=live`, `SAM_MODE=live`, `LIVE_DOD_APPROVED=1`, both credentials, licensed photographs/permission records, a documented budget/call count and explicit human authorization. It makes no calls when any prerequisite is missing. See `docs/live-evidence.md`.
 
-The Phase 0 gate verifies public documentation, not live access. Live Meta SAM was verified manually on 2026-10-22 with two calls (approximately USD 0.005); OpenRouter generation/edit and a paid Flare/Sunburst comparison remain unverified/blocked. See `docs/live-evidence.md`.
+The Phase 0 gate verifies public documentation, not live access. Live OpenRouter Flare/Sunburst and live Meta SAM were verified manually on 2026-10-22; the full live DoD passed. See `docs/live-evidence.md` for Run IDs, costs and observed limitations.

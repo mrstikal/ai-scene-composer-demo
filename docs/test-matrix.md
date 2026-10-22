@@ -1,6 +1,6 @@
 # Test Matrix
 
-Last updated: 2026-10-22, after Phase 5 and Phase 6 hardening. This maps the plan's acceptance checklist to automated evidence. Live rows are not inferred from mocks. Current baseline: 32 Vitest files / 178 tests and 12 Playwright mock tests.
+Last updated: 2026-10-22, after the live DoD. This maps the plan's acceptance checklist to automated and observed live evidence. Current baseline: 32 Vitest files / 178 tests and 12 Playwright mock tests; the live DoD is recorded separately in [live evidence](live-evidence.md).
 
 ## Offline Implementation
 
@@ -27,14 +27,14 @@ Last updated: 2026-10-22, after Phase 5 and Phase 6 hardening. This maps the pla
 
 | Acceptance item | Evidence | Status |
 |---|---|---|
-| Both OpenRouter models and hosted Meta SAM verified with actual accounts | [Live evidence](live-evidence.md) | partial: live Meta SAM verified once; OpenRouter not exercised |
-| Nonpersonal sample/reference photos and permission records supplied | [Fixture slots](../README.md#fixture-slots) | blocked: synthetic fixtures only |
-| Preset and custom generated scenes with observed cost/provenance | [Live evidence](live-evidence.md) | blocked: no approved live OpenRouter run |
-| Real SAM selection/correction aligned on an AI-generated scene | [Live evidence](live-evidence.md) | blocked: SAM was verified on the synthetic sample, not an AI-generated scene |
-| Reference-driven Flare/Sunburst comparison with both costs and latency | [Live evidence](live-evidence.md), [five-case table](../README.md#five-case-evaluation) | blocked: no paid comparison approval |
-| Continue result and persist another edit/branch across restart | Mock coverage only | blocked live |
-| Protected RGB pixels exactly preserved; boundary artifacts documented | Local diagnostics covered by tests | blocked live |
-| README demo steps, mode limits and remaining evaluation rows | [README](../README.md), [five-case table](../README.md#five-case-evaluation) | pass |
+| Both OpenRouter models and hosted Meta SAM verified with actual accounts | [Live evidence](live-evidence.md) | pass: Flare, Sunburst and SAM 3.1 succeeded on 2026-10-22 |
+| Nonpersonal sample/reference photos and permission records supplied | [Fixture slots](../README.md#fixture-slots), `src/test/fixtures/licenses/` | pass: CC0 source/reference photos with records |
+| Preset and custom generated scenes with observed cost/provenance | [Live evidence](live-evidence.md) | pass: Flare preset 13,705 micro-USD; custom 13,360 micro-USD, provider-reported |
+| Real SAM selection/correction aligned on an AI-generated scene | [Live evidence](live-evidence.md) | pass: SAM 3.1 positive and correction calls on the preset root; mask limitation documented |
+| Reference-driven Flare/Sunburst comparison with both costs and latency | [Live evidence](live-evidence.md), [five-case table](../README.md#five-case-evaluation) | pass: identical hash/parent, provider costs 27,914 each; recolor case passed |
+| Continue result and persist another edit/branch across restart | [Live evidence](live-evidence.md) | pass: child edit and root branch survived close/reopen |
+| Protected RGB pixels exactly preserved; boundary artifacts documented | [Live evidence](live-evidence.md) | pass: protected mismatch 0, final MAE 0; SAM mask boundary limitation documented |
+| README demo steps, mode limits and remaining evaluation rows | [README](../README.md), [five-case table](../README.md#five-case-evaluation) | pass: Recolor sofa passed; four fixed cases remain `not_run` |
 
 ## Commands
 
@@ -45,6 +45,9 @@ npm test
 npm run build
 npm run test:e2e
 npm run check:contracts
+
+# Live DoD only with explicit approval; makes 8 image + 4 SAM paid calls.
+RUN_LIVE_AI_TESTS=1 AI_MODE=live SAM_MODE=live LIVE_DOD_APPROVED=1 npm run test:live
 ```
 
-The default suite uses mock generation, fixture SAM and blank provider keys. It must not spend money or require network access.
+The default suite uses mock generation, fixture SAM and blank provider keys. It must not spend money or require network access. The live DoD is recorded in [live evidence](live-evidence.md).

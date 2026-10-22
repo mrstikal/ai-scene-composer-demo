@@ -2,6 +2,7 @@
   "name": "ai-scene-composer-demo",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "AI Scene Composer PoC",
   "scripts": {
